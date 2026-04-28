@@ -72,7 +72,7 @@ async def postprocess(
             focus_points=parse_focus_points(raw),
             raw_response=raw,
             strategy="single",
-            topic_count=1,
+            topic_count=strategy.topic_count,
         )
 
     # Map phase
