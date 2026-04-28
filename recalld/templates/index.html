@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>New recording</h1>
+
+{% if not cfg.categories %}
+<div class="alert error">
+  No categories configured. <a href="/settings/">Add one in Settings</a> before uploading.
+</div>
+{% else %}
+<form id="upload-form" action="/upload" method="post" enctype="multipart/form-data">
+  <div class="drop-zone" id="drop-zone">
+    <svg width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" style="opacity:0.4">
+      <path d="M12 16V4m0 0L8 8m4-4 4 4M4 20h16"/>
+    </svg>
+    <p>Drop a recording here, or click to browse</p>
+    <input type="file" id="file-input" name="file" accept=".m4a,.mp4,.wav,.mov,.mkv,.webm" style="display:none" required>
+  </div>
+
+  <div class="field" style="margin-top:16px">
+    <label for="category_id">Category</label>
+    <select name="category_id" id="category_id">
+      {% for cat in cfg.categories %}
+      <option value="{{ cat.id }}" {% if cfg.last_used_category == cat.id %}selected{% endif %}>
+        {{ cat.name }}
+      </option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <button type="submit" style="margin-top:8px">Process recording</button>
+</form>
+{% endif %}
+
+{% if incomplete_jobs %}
+<h2>Incomplete jobs</h2>
+<ul class="job-list">
+  {% for job in incomplete_jobs %}
+  <li class="job-item">
+    <span class="filename">{{ job.original_filename }}</span>
+    <span class="stage">{{ job.current_stage.value }}</span>
+    <form action="/jobs/{{ job.id }}/resume" method="post" style="display:inline">
+      <button type="submit" class="btn-ghost" style="padding:4px 12px;font-size:12px">Resume</button>
+    </form>
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

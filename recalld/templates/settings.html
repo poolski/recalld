@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Settings</h1>
+
+{% if saved %}
+<div class="alert success">Settings saved.</div>
+{% endif %}
+
+<form action="/settings/" method="post">
+  <h2>Obsidian</h2>
+  <div class="field">
+    <label>Local REST API URL</label>
+    <input type="url" name="obsidian_api_url" value="{{ cfg.obsidian_api_url }}">
+  </div>
+  <div class="field">
+    <label>API Key</label>
+    <input type="password" name="obsidian_api_key" value="{{ cfg.obsidian_api_key }}" placeholder="Leave blank if not set">
+  </div>
+
+  <h2>LLM</h2>
+  <div class="field">
+    <label>Endpoint URL</label>
+    <input type="url" name="llm_base_url" value="{{ cfg.llm_base_url }}">
+  </div>
+  <div class="field">
+    <label>Model name</label>
+    <input type="text" name="llm_model" value="{{ cfg.llm_model }}" placeholder="e.g. qwen2.5-7b-instruct">
+  </div>
+  <div class="field">
+    <label>Context headroom (0.0–1.0)</label>
+    <input type="number" name="llm_context_headroom" value="{{ cfg.llm_context_headroom }}" step="0.05" min="0.1" max="1.0">
+  </div>
+  {% if detected_context_length %}
+  <p style="font-size:13px; color:var(--muted); margin-top:-8px; margin-bottom:16px">
+    Detected context length: {{ detected_context_length }} tokens
+  </p>
+  {% endif %}
+
+  <h2>Transcription</h2>
+  <div class="field">
+    <label>Whisper model</label>
+    <select name="whisper_model">
+      {% for m in ["tiny", "base", "small", "medium"] %}
+      <option value="{{ m }}" {% if cfg.whisper_model == m %}selected{% endif %}>{{ m }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="field">
+    <label>HuggingFace token (required for pyannote)</label>
+    <input type="password" name="huggingface_token" value="{{ cfg.huggingface_token }}" placeholder="hf_…">
+  </div>
+
+  <h2>Logging</h2>
+  <div class="field">
+    <label>Log level</label>
+    <select name="log_level">
+      {% for lvl in ["info", "debug", "verbose"] %}
+      <option value="{{ lvl }}" {% if cfg.log_level == lvl %}selected{% endif %}>{{ lvl | capitalize }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="field">
+    <label>Completed job retention (days)</label>
+    <input type="number" name="scratch_retention_days" value="{{ cfg.scratch_retention_days }}" min="1">
+  </div>
+
+  <button type="submit">Save settings</button>
+</form>
+
+<h2>Categories</h2>
+{% for cat in cfg.categories %}
+<div style="border:1px solid var(--border); border-radius:8px; padding:16px; margin-bottom:12px">
+  <strong>{{ cat.name }}</strong>
+  <p style="font-size:13px; color:var(--muted); margin:4px 0">{{ cat.vault_path }}</p>
+  {% if cat.focus_note_path %}
+  <p style="font-size:12px; color:var(--muted)">Focus: {{ cat.focus_note_path }}</p>
+  {% endif %}
+  <form action="/categories/{{ cat.id }}/speakers" method="post" style="display:flex; gap:8px; margin-top:10px">
+    <input type="text" name="speaker_a" value="{{ cat.speaker_a }}" style="width:140px">
+    <input type="text" name="speaker_b" value="{{ cat.speaker_b }}" style="width:140px">
+    <button type="submit" class="btn-ghost" style="padding:6px 12px;font-size:13px">Save names</button>
+  </form>
+  <form action="/categories/{{ cat.id }}/delete" method="post" style="margin-top:8px">
+    <button type="submit" class="btn-ghost" style="padding:4px 10px;font-size:12px;color:var(--red);border-color:var(--red)">Delete</button>
+  </form>
+</div>
+{% endfor %}
+
+<h2>Add category</h2>
+<form action="/categories/" method="post">
+  <div class="field"><label>Name</label><input type="text" name="name" required placeholder="ADHD Coaching"></div>
+  <div class="field"><label>Vault path</label><input type="text" name="vault_path" required placeholder="Life/Mental Health/ADHD Coaching/Sessions"></div>
+  <div class="field"><label>Focus note path (optional)</label><input type="text" name="focus_note_path" placeholder="Life/Mental Health/ADHD Coaching/Coaching Focus.md"></div>
+  <div style="display:flex; gap:8px">
+    <div class="field" style="flex:1"><label>Speaker A name</label><input type="text" name="speaker_a" value="You"></div>
+    <div class="field" style="flex:1"><label>Speaker B name</label><input type="text" name="speaker_b" value="Coach"></div>
+  </div>
+  <button type="submit">Add category</button>
+</form>
+{% endblock %}

@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Processing: {{ job.original_filename }}</h1>
+
+<ul class="stage-list">
+  {% for stage in ["ingest", "transcribe", "diarise", "align", "postprocess", "vault"] %}
+  <li class="stage-item" id="stage-{{ stage }}">
+    <span class="stage-icon">○</span>
+    <span class="stage-name">{{ stage | capitalize }}</span>
+    <span class="stage-msg"></span>
+  </li>
+  {% endfor %}
+</ul>
+
+<div id="transcript-preview" class="preview-box" style="display:none"></div>
+<div id="chunk-info" style="display:none; color: var(--muted); font-size:13px; margin:8px 0;"></div>
+
+<div id="results-section" style="display:none; margin-top:24px">
+  <h2>Summary</h2>
+  <p id="result-summary"></p>
+  <h2>Focus</h2>
+  <ul id="result-focus" style="padding-left:20px; margin-top:8px"></ul>
+  <a id="obsidian-link" href="#" class="btn" style="margin-top:16px; display:inline-block" target="_blank">
+    Open in Obsidian
+  </a>
+</div>
+
+<button id="diarise-skip-btn" style="display:none; margin-top:12px" class="btn-ghost"
+  hx-post="/jobs/{{ job.id }}/skip-diarise" hx-swap="none">
+  Continue without diarisation
+</button>
+<button id="postprocess-fallback-btn" style="display:none; margin-top:12px" class="btn-ghost"
+  hx-post="/jobs/{{ job.id }}/write-transcript-only" hx-swap="none">
+  Write transcript-only note
+</button>
+
+<details class="debug-panel">
+  <summary>Debug log</summary>
+  <pre id="debug-log" class="debug-log"></pre>
+  <div style="margin-top:8px; display:flex; gap:8px">
+    <button class="btn-ghost" onclick="copyLog()" style="font-size:12px;padding:4px 10px">Copy</button>
+    <button class="btn-ghost" onclick="saveLog()" style="font-size:12px;padding:4px 10px">Save to file</button>
+  </div>
+</details>
+
+<script>connectSSE("{{ job.id }}");</script>
+{% endblock %}
