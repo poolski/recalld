@@ -48,3 +48,10 @@ def test_config_file_is_human_readable(tmp_path):
     raw = path.read_text()
     parsed = json.loads(raw)
     assert "obsidian_api_url" in parsed
+
+
+def test_corrupt_config_raises_clear_error(tmp_path):
+    path = tmp_path / "config.json"
+    path.write_text("not valid json {{{")
+    with pytest.raises(ValueError, match="is invalid"):
+        load_config(path)
