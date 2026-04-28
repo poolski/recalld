@@ -66,7 +66,7 @@ class VaultWriter:
         return {"Authorization": f"Bearer {self.api_key}"}
 
     async def write_note(self, vault_path: str, filename: str, content: str) -> None:
-        encoded = quote(f"{vault_path}/{filename}")
+        encoded = quote(f"{vault_path}/{filename}", safe="/")
         url = f"{self.api_url}/vault/{encoded}"
         async with httpx.AsyncClient(verify=False, timeout=15.0) as client:
             resp = await client.post(url, content=content.encode(), headers={
@@ -77,7 +77,7 @@ class VaultWriter:
                 raise VaultWriteError(f"Obsidian API error {resp.status_code}: {resp.text}")
 
     async def append_to_note(self, vault_path: str, content: str) -> None:
-        encoded = quote(vault_path)
+        encoded = quote(vault_path, safe="/")
         url = f"{self.api_url}/vault/{encoded}"
         async with httpx.AsyncClient(verify=False, timeout=15.0) as client:
             resp = await client.patch(url, content=content.encode(), headers={
@@ -88,7 +88,7 @@ class VaultWriter:
                 raise VaultWriteError(f"Obsidian API error {resp.status_code}: {resp.text}")
 
     async def note_exists(self, vault_path: str) -> bool:
-        encoded = quote(vault_path)
+        encoded = quote(vault_path, safe="/")
         url = f"{self.api_url}/vault/{encoded}"
         async with httpx.AsyncClient(verify=False, timeout=5.0) as client:
             resp = await client.get(url, headers=self._headers())
