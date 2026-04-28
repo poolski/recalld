@@ -36,3 +36,11 @@ def test_list_incomplete_jobs(tmp_path):
     incomplete = list_incomplete_jobs(scratch_root=tmp_path)
     assert len(incomplete) == 1
     assert incomplete[0].id == j1.id
+
+
+def test_save_job_creates_dir_if_missing(tmp_path):
+    job = Job(category_id="x", original_filename="f.m4a")
+    # Don't call create_job — call save_job directly on a new scratch root
+    new_root = tmp_path / "newroot"
+    save_job(job, scratch_root=new_root)
+    assert (new_root / job.id / "job.json").exists()
