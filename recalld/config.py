@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -36,10 +37,17 @@ class Config(BaseModel):
 
 def load_config(path: Path = DEFAULT_CONFIG_PATH) -> Config:
     if path.exists():
-        return Config.model_validate_json(path.read_text())
+        try:
+            return Config.model_validate_json(path.read_text())
+        except Exception as exc:
+            raise ValueError(
+                f"Config file at {path} is invalid: {exc}\n"
+                "Fix or delete the file and restart recalld."
+            ) from exc
     return Config()
 
 
 def save_config(cfg: Config, path: Path = DEFAULT_CONFIG_PATH) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(cfg.model_dump_json(indent=2))
+    os.chmod(path, 0o600)
