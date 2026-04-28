@@ -63,6 +63,7 @@ def create_job(category_id: str, original_filename: str, scratch_root: Path = DE
 
 def save_job(job: Job, scratch_root: Path = DEFAULT_SCRATCH_ROOT) -> None:
     path = _job_dir(job.id, scratch_root) / "job.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(job.model_dump_json(indent=2))
 
 
