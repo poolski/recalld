@@ -35,6 +35,158 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 });
 
+let statusPopoverHideTimer = null;
+
+document.addEventListener("pointerover", (event) => {
+  if (event.target.closest("#status-popover")) {
+    clearHideStatusPopover();
+    return;
+  }
+  const button = event.target.closest("[data-status-kind]");
+  if (!button) return;
+  void openStatusPopover(button);
+});
+
+document.addEventListener("pointerout", (event) => {
+  if (event.target.closest("#status-popover")) {
+    const related = event.relatedTarget;
+    if (related && related.closest("#status-popover")) return;
+    scheduleHideStatusPopover();
+    return;
+  }
+  const button = event.target.closest("[data-status-kind]");
+  if (!button) return;
+  const related = event.relatedTarget;
+  if (related && (button.contains(related) || related.closest("#status-popover"))) return;
+  scheduleHideStatusPopover();
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") hideStatusPopover();
+});
+
+async function openStatusPopover(button) {
+  const popover = document.getElementById("status-popover");
+  if (!popover) return;
+
+  const kind = button.dataset.statusKind;
+  if (!kind) return;
+
+  clearHideStatusPopover();
+
+  if (!popover.hidden && popover.dataset.kind === kind) {
+    hideStatusPopover();
+    return;
+  }
+
+  popover.dataset.kind = kind;
+  popover.innerHTML = "";
+  popover.hidden = false;
+  renderStatusPopoverSkeleton(popover, button.dataset.statusTitle || "Status");
+  positionStatusPopover(button, popover);
+
+  try {
+    const resp = await fetch(`/settings/status/details?kind=${encodeURIComponent(kind)}`, {
+      headers: { "Accept": "application/json" },
+    });
+    if (!resp.ok) {
+      renderStatusPopoverError(popover, "Unable to load status details.");
+      return;
+    }
+    const data = await resp.json();
+    renderStatusPopover(popover, button, data);
+  } catch (_) {
+    renderStatusPopoverError(popover, "Unable to load status details.");
+  }
+}
+
+function scheduleHideStatusPopover() {
+  clearHideStatusPopover();
+  statusPopoverHideTimer = window.setTimeout(() => {
+    hideStatusPopover();
+  }, 160);
+}
+
+function clearHideStatusPopover() {
+  if (statusPopoverHideTimer !== null) {
+    window.clearTimeout(statusPopoverHideTimer);
+    statusPopoverHideTimer = null;
+  }
+}
+
+function positionStatusPopover(button, popover) {
+  const rect = button.getBoundingClientRect();
+  const width = 320;
+  const top = Math.round(rect.bottom + 10);
+  const left = Math.min(
+    Math.max(12, Math.round(rect.right - width)),
+    Math.max(12, window.innerWidth - width - 12),
+  );
+  popover.style.top = `${top}px`;
+  popover.style.left = `${left}px`;
+  popover.style.width = `${width}px`;
+}
+
+function hideStatusPopover() {
+  clearHideStatusPopover();
+  const popover = document.getElementById("status-popover");
+  if (!popover) return;
+  popover.hidden = true;
+  popover.dataset.kind = "";
+  popover.innerHTML = "";
+}
+
+function renderStatusPopoverSkeleton(popover, title) {
+  popover.innerHTML = "";
+  const heading = document.createElement("div");
+  heading.className = "status-popover-title";
+  heading.textContent = title;
+  const body = document.createElement("div");
+  body.className = "status-popover-empty";
+  body.textContent = "Loading details…";
+  popover.append(heading, body);
+}
+
+function renderStatusPopoverError(popover, message) {
+  popover.innerHTML = "";
+  const heading = document.createElement("div");
+  heading.className = "status-popover-title";
+  heading.textContent = "Status";
+  const body = document.createElement("div");
+  body.className = "status-popover-empty";
+  body.textContent = message;
+  popover.append(heading, body);
+}
+
+function renderStatusPopover(popover, button, data) {
+  popover.innerHTML = "";
+  const heading = document.createElement("div");
+  heading.className = "status-popover-title";
+  heading.textContent = data.title || button.dataset.statusTitle || "Status";
+  popover.appendChild(heading);
+
+  const list = document.createElement("dl");
+  list.className = "status-popover-list";
+  (data.items || []).forEach((item) => {
+    const row = document.createElement("div");
+    row.className = "status-popover-row";
+
+    const label = document.createElement("dt");
+    label.className = "status-popover-label";
+    label.textContent = item.label;
+
+    const value = document.createElement("dd");
+    value.className = "status-popover-value";
+    value.textContent = item.value;
+
+    row.append(label, value);
+    list.appendChild(row);
+  });
+  popover.appendChild(list);
+  popover.hidden = false;
+  positionStatusPopover(button, popover);
+}
+
 // SSE-based stage progress updates
 async function connectSSE(jobId, initialStages = {}) {
   if (window.marked) {
