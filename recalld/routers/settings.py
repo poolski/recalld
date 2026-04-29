@@ -182,10 +182,15 @@ async def status_details(kind: str):
 
     if kind == "llm":
         llm = payload[kind]
+        current_model = llm["current_model"]
+        loaded_length = current_model.loaded_context_length if current_model else None
+        max_length = current_model.max_context_length if current_model else None
         items = [
             {"label": "Selected model", "value": llm["selected_model"]},
             {"label": "Base URL", "value": llm["base_url"]},
-            {"label": "Context length", "value": f"{llm['detected_context_length']:,}"},
+            {"label": "Loaded", "value": "Yes" if current_model and current_model.is_loaded else "No"},
+            {"label": "Loaded context length", "value": f"{loaded_length:,}" if loaded_length is not None else "Not loaded"},
+            {"label": "Maximum context length", "value": f"{max_length:,}" if max_length is not None else "Unknown"},
             {"label": "Available models", "value": str(len(llm["provider_models"]))},
         ]
         return JSONResponse({"title": "LLM", "ok": llm["ok"], "items": items})

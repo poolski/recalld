@@ -41,7 +41,9 @@
     <div class="card" style="padding:14px 16px; margin-top:8px">
       <div style="display:flex; gap:16px; flex-wrap:wrap; align-items:center">
         <span><strong>Current model</strong>: {{ current_model.id if current_model else (cfg.llm_model or "Not selected") }}</span>
-        <span><strong>Context length</strong>: {{ "{:,}".format(detected_context_length) if detected_context_length else "Unknown" }} tokens</span>
+        <span><strong>Loaded</strong>: {{ "Yes" if current_model and current_model.is_loaded else "No" }}</span>
+        <span><strong>Loaded context length</strong>: {{ "{:,}".format(current_model.loaded_context_length) if current_model and current_model.loaded_context_length else "Not loaded" }}</span>
+        <span><strong>Maximum context length</strong>: {{ "{:,}".format(current_model.max_context_length) if current_model and current_model.max_context_length else "Unknown" }} tokens</span>
         <span><strong>Headroom budget</strong>: {{ "{:,}".format((detected_context_length * cfg.llm_context_headroom) | int) if detected_context_length else "Unknown" }} tokens</span>
       </div>
     </div>
@@ -63,7 +65,9 @@
           <tr style="text-align:left; border-bottom:1px solid var(--border)">
             <th style="padding:10px 12px">Use</th>
             <th style="padding:10px 12px">Model</th>
-            <th style="padding:10px 12px">Context length</th>
+            <th style="padding:10px 12px">Loaded</th>
+            <th style="padding:10px 12px">Loaded context length</th>
+            <th style="padding:10px 12px">Maximum context length</th>
             <th style="padding:10px 12px">Status</th>
           </tr>
         </thead>
@@ -74,7 +78,9 @@
               <input type="radio" name="llm_model" value="{{ model.id }}" {% if model.selected %}checked{% endif %}>
             </td>
             <td style="padding:12px"><code>{{ model.id }}</code></td>
-            <td style="padding:12px">{{ "{:,}".format(model.context_length) if model.context_length else "Unknown" }}</td>
+            <td style="padding:12px">{% if model.is_loaded %}Yes{% else %}No{% endif %}</td>
+            <td style="padding:12px">{{ "{:,}".format(model.loaded_context_length) if model.loaded_context_length else "Not loaded" }}</td>
+            <td style="padding:12px">{{ "{:,}".format(model.max_context_length) if model.max_context_length else "Unknown" }}</td>
             <td style="padding:12px">{% if model.selected %}Current{% else %}Available{% endif %}</td>
           </tr>
           {% endfor %}

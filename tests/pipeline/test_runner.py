@@ -39,7 +39,7 @@ async def test_pipeline_waits_for_vault_confirmation(tmp_path, monkeypatch):
         topic_count=1,
     )
 
-    with patch("recalld.pipeline.runner.detect_context_length", AsyncMock(return_value=1000)), \
+    with patch("recalld.pipeline.runner.ensure_loaded_context_length", AsyncMock(return_value=1000)), \
          patch("recalld.pipeline.runner.postprocess", AsyncMock(return_value=result)), \
          patch("recalld.pipeline.runner.bus.publish") as mock_publish, \
          patch("recalld.pipeline.runner.VaultWriter") as MockWriter:
