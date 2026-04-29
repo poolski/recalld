@@ -13,12 +13,6 @@ from recalld.pipeline.runner import run_pipeline, quote_path
 router = APIRouter(prefix="/jobs")
 
 
-@router.get("/{job_id}", response_class=HTMLResponse)
-async def job_detail(request: Request, job_id: str):
-    job = load_job(job_id)
-    return templates.TemplateResponse("processing.html", {"request": request, "job": job})
-
-
 @router.get("/{job_id}/row", response_class=HTMLResponse)
 async def job_row(request: Request, job_id: str):
     job = load_job(job_id, scratch_root=DEFAULT_SCRATCH_ROOT)
@@ -35,6 +29,12 @@ async def confirm_delete(request: Request, job_id: str):
 async def delete_job_route(job_id: str):
     delete_job(job_id, scratch_root=DEFAULT_SCRATCH_ROOT)
     return HTMLResponse("")
+
+
+@router.get("/{job_id}", response_class=HTMLResponse)
+async def job_detail(request: Request, job_id: str):
+    job = load_job(job_id)
+    return templates.TemplateResponse(request, "processing.html", {"job": job})
 
 
 @router.get("/{job_id}/events")
@@ -57,7 +57,7 @@ async def resume_job(request: Request, job_id: str):
     job_dir = DEFAULT_SCRATCH_ROOT / job.id
     source = job_dir / job.original_filename
     asyncio.create_task(run_pipeline(job, source, cfg))
-    return templates.TemplateResponse("processing.html", {"request": request, "job": job})
+    return templates.TemplateResponse(request, "processing.html", {"job": job})
 
 
 @router.post("/{job_id}/skip-diarise", response_class=HTMLResponse)
@@ -94,7 +94,7 @@ async def skip_diarise(request: Request, job_id: str):
 
     source = scratch / job.original_filename
     asyncio.create_task(run_pipeline(job, source, cfg))
-    return templates.TemplateResponse("processing.html", {"request": request, "job": job})
+    return templates.TemplateResponse(request, "processing.html", {"job": job})
 
 
 @router.post("/{job_id}/write-transcript-only", response_class=HTMLResponse)
@@ -131,4 +131,4 @@ async def write_transcript_only(request: Request, job_id: str):
                              "obsidian_uri": f"obsidian://open?path={quote_path(cat.vault_path + '/' + filename)}",
                              "summary": "", "focus_points": []})
 
-    return templates.TemplateResponse("processing.html", {"request": request, "job": job})
+    return templates.TemplateResponse(request, "processing.html", {"job": job})
