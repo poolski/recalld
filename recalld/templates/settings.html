@@ -8,6 +8,12 @@
 
 <div class="card">
 <form action="/settings/" method="post">
+  <h2>Vault</h2>
+  <div class="field">
+    <label>Vault name</label>
+    <input type="text" name="vault_name" value="{{ cfg.vault_name }}" placeholder="Personal">
+  </div>
+
   <h2>Obsidian</h2>
   <div class="field">
     <label>Local REST API URL</label>
@@ -15,7 +21,10 @@
   </div>
   <div class="field">
     <label>API Key</label>
-    <input type="password" name="obsidian_api_key" value="{{ cfg.obsidian_api_key }}" placeholder="Leave blank if not set">
+    <input type="password" name="obsidian_api_key" value="" placeholder="{% if obsidian_api_key_set %}Leave blank to keep existing{% else %}Leave blank if not set{% endif %}">
+    {% if obsidian_api_key_set %}
+    <p style="font-size:12px; color:var(--muted); margin-top:6px">Stored secret detected.</p>
+    {% endif %}
   </div>
 
   <h2>LLM</h2>
@@ -91,7 +100,10 @@
   </div>
   <div class="field">
     <label>HuggingFace token (required for pyannote)</label>
-    <input type="password" name="huggingface_token" value="{{ cfg.huggingface_token }}" placeholder="hf_…">
+    <input type="password" name="huggingface_token" value="" placeholder="{% if huggingface_token_set %}Leave blank to keep existing{% else %}hf_…{% endif %}">
+    {% if huggingface_token_set %}
+    <p style="font-size:12px; color:var(--muted); margin-top:6px">Stored secret detected.</p>
+    {% endif %}
   </div>
 
   <h2>Logging</h2>

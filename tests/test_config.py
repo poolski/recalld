@@ -55,3 +55,20 @@ def test_corrupt_config_raises_clear_error(tmp_path):
     path.write_text("not valid json {{{")
     with pytest.raises(ValueError, match="is invalid"):
         load_config(path)
+
+
+def test_default_config_path_is_resolved_at_call_time(tmp_path, monkeypatch):
+    path = tmp_path / "config.json"
+    monkeypatch.setattr("recalld.config.DEFAULT_CONFIG_PATH", path)
+
+    cfg = load_config()
+    cfg.llm_model = "qwen/qwen3-4b"
+    save_config(cfg)
+
+    assert path.exists()
+    assert load_config().llm_model == "qwen/qwen3-4b"
+
+
+def test_config_defaults_to_personal_vault_name():
+    cfg = Config()
+    assert cfg.vault_name == "Personal"
