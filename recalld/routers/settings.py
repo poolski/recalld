@@ -17,12 +17,14 @@ async def _settings_context(request: Request, cfg, *, saved: bool = False) -> di
     provider_models = await list_available_models(cfg.llm_base_url, cfg.llm_model)
     current_model = next((model for model in provider_models if model.selected), None)
     detected_context_length = current_model.context_length if current_model and current_model.context_length else await detect_context_length(cfg.llm_base_url, cfg.llm_model)
+    model_refresh_unavailable = bool(cfg.llm_model) and not provider_models
     return {
         "request": request,
         "cfg": cfg,
         "provider_models": provider_models,
         "current_model": current_model,
         "detected_context_length": detected_context_length,
+        "model_refresh_unavailable": model_refresh_unavailable,
         "saved": saved,
     }
 

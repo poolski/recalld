@@ -42,6 +42,11 @@
       <label style="margin:0">Available models</label>
       <button type="button" class="btn-ghost" onclick="window.location.href='/settings/'">Refresh models</button>
     </div>
+    {% if model_refresh_unavailable %}
+    <p style="font-size:13px; color:var(--red); margin-top:8px">
+      Could not refresh models from LM Studio. Keeping selected model: <code>{{ cfg.llm_model }}</code>.
+    </p>
+    {% endif %}
     {% if provider_models %}
     <div style="overflow-x:auto">
       <table style="width:100%; border-collapse:collapse; margin-top:8px">
