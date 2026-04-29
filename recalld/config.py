@@ -22,6 +22,7 @@ class Category(BaseModel):
 
 
 class Config(BaseModel):
+    vault_name: str = "Personal"
     obsidian_api_url: str = "https://127.0.0.1:27124"
     obsidian_api_key: str = ""
     llm_base_url: str = "http://localhost:1234/v1"
@@ -35,7 +36,12 @@ class Config(BaseModel):
     scratch_retention_days: int = 30
 
 
-def load_config(path: Path = DEFAULT_CONFIG_PATH) -> Config:
+def _resolve_config_path(path: Path | None) -> Path:
+    return path or DEFAULT_CONFIG_PATH
+
+
+def load_config(path: Path | None = None) -> Config:
+    path = _resolve_config_path(path)
     if path.exists():
         try:
             return Config.model_validate_json(path.read_text())
@@ -47,7 +53,8 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> Config:
     return Config()
 
 
-def save_config(cfg: Config, path: Path = DEFAULT_CONFIG_PATH) -> None:
+def save_config(cfg: Config, path: Path | None = None) -> None:
+    path = _resolve_config_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(cfg.model_dump_json(indent=2))
     os.chmod(path, 0o600)

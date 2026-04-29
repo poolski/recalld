@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from fastapi import APIRouter, Request, Form
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 
 from recalld.app import templates
 from recalld.events import bus
@@ -12,7 +12,7 @@ from recalld.jobs import DEFAULT_SCRATCH_ROOT, JobStage, can_restart_from_stage,
 from recalld.pipeline.align import LabelledTurn
 from recalld.pipeline.postprocess import PostProcessResult
 from recalld.pipeline.vault import render_session_note_preview
-from recalld.pipeline.runner import run_pipeline, quote_path
+from recalld.pipeline.runner import run_pipeline
 
 router = APIRouter(prefix="/jobs")
 
@@ -64,6 +64,23 @@ def _load_vault_preview(job, category) -> str:
         result=result,
         turns=turns,
     )
+
+
+def _vault_note_path(job, category) -> str | None:
+    if not category:
+        return None
+    session_date = job.created_at.date()
+    filename = job.filename or f"{session_date.isoformat()} {category.name}.md"
+    return f"{category.vault_path}/{filename}"
+
+
+def _vault_uri(job, category, vault_name: str) -> str | None:
+    note_path = _vault_note_path(job, category)
+    if not note_path:
+        return None
+    from urllib.parse import quote
+
+    return f"obsidian://open?vault={quote(vault_name, safe='')}&file={quote(note_path, safe='/')}"
 
 
 def _swap_aligned_speakers(job) -> None:
@@ -118,8 +135,7 @@ async def job_state(job_id: str):
     obsidian_uri = None
     cat = next((c for c in cfg.categories if c.id == job.category_id), None)
     if cat and job.stage_statuses.get("vault") == "done":
-        filename = job.filename or f"{job.created_at.date().isoformat()} {cat.name}.md"
-        obsidian_uri = f"obsidian://open?path={quote_path(cat.vault_path + '/' + filename)}"
+        obsidian_uri = f"/jobs/{job.id}/open-in-obsidian"
 
     return JSONResponse({
         "id": job.id,
@@ -145,6 +161,27 @@ async def job_events(job_id: str):
             yield f"data: {data}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@router.get("/{job_id}/open-in-obsidian")
+async def open_in_obsidian(job_id: str):
+    from recalld.config import load_config
+
+    cfg = load_config()
+    job = load_job(job_id, scratch_root=DEFAULT_SCRATCH_ROOT)
+    cat = next((c for c in cfg.categories if c.id == job.category_id), None)
+    if not cat:
+        return HTMLResponse("", status_code=404)
+
+    note_path = _vault_note_path(job, cat)
+    if not note_path:
+        return HTMLResponse("", status_code=404)
+
+    uri = _vault_uri(job, cat, cfg.vault_name)
+    if not uri:
+        return HTMLResponse("", status_code=404)
+
+    return RedirectResponse(uri, status_code=302)
 
 
 def _job_source_path(job_id: str, original_filename: str):
@@ -321,7 +358,7 @@ async def write_transcript_only(request: Request, job_id: str):
         job.stage_statuses["vault"] = "done"
         _save_job(job)
         bus.publish(job.id, {"stage": "vault", "status": "done",
-                             "obsidian_uri": f"obsidian://open?path={quote_path(cat.vault_path + '/' + filename)}",
+                             "obsidian_uri": f"/jobs/{job.id}/open-in-obsidian",
                              "summary": "", "focus_points": []})
 
     return templates.TemplateResponse(request, "processing.html", {"job": job})

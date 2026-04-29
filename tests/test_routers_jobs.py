@@ -139,6 +139,22 @@ def test_confirm_vault_write_updates_job_and_resumes_pipeline(scratch, client, m
     assert "coro" in scheduled
 
 
+def test_open_in_obsidian_uses_full_vault_note_path(scratch, client, monkeypatch):
+    job = create_job(category_id="test", original_filename="audio.m4a", scratch_root=scratch)
+    job.current_stage = JobStage.vault
+    job.status = JobStatus.complete
+    job.filename = "2025-04-29 Coaching.md"
+    job.stage_statuses["vault"] = "done"
+    save_job(job, scratch_root=scratch)
+    config = Config(vault_name="Personal", categories=[Category(id="test", name="Coaching", vault_path="Life/Sessions")])
+    monkeypatch.setattr("recalld.config.load_config", lambda path=None: config)
+
+    resp = client.get(f"/jobs/{job.id}/open-in-obsidian", follow_redirects=False)
+
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "obsidian://open?vault=Personal&file=Life/Sessions/2025-04-29%20Coaching.md"
+
+
 def test_job_state_returns_latest_stage_statuses(scratch, client):
     job = create_job(category_id="test", original_filename="audio.m4a", scratch_root=scratch)
     job.stage_statuses["ingest"] = "done"
