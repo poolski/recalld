@@ -64,6 +64,30 @@ async def test_postprocess_map_reduce_calls_llm_multiple_times():
     assert call_count > 1
 
 
+@pytest.mark.asyncio
+async def test_postprocess_uses_single_request_when_transcript_fits_provider_budget():
+    turns = _turns([("You", "word " * 120), ("Coach", "word " * 120)])
+    call_count = 0
+
+    async def fake_complete(system, user):
+        nonlocal call_count
+        call_count += 1
+        return FAKE_LLM_RESPONSE
+
+    with patch("recalld.pipeline.postprocess.LLMClient") as MockClient:
+        instance = MockClient.return_value
+        instance.complete = fake_complete
+        result = await postprocess(
+            turns=turns,
+            llm_base_url="http://localhost:1234/v1",
+            llm_model="qwen",
+            token_budget=1000,
+        )
+
+    assert call_count == 1
+    assert result.strategy == "single"
+
+
 def test_parse_focus_points_from_markdown():
     from recalld.pipeline.postprocess import parse_focus_points
     md = "## Focus\n\n- [ ] Do thing one\n- [ ] Do thing two\n\nExtra text"
