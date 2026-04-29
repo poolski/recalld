@@ -88,6 +88,32 @@ async def test_postprocess_uses_single_request_when_transcript_fits_provider_bud
     assert result.strategy == "single"
 
 
+@pytest.mark.asyncio
+async def test_postprocess_includes_configured_speaker_names_in_system_prompt():
+    turns = _turns([("Alex", "I struggled with focus this week"), ("Jordan", "What pattern did you notice?")])
+    captured = {}
+
+    async def fake_complete(system, user):
+        captured["system"] = system
+        return FAKE_LLM_RESPONSE
+
+    with patch("recalld.pipeline.postprocess.LLMClient") as MockClient:
+        instance = MockClient.return_value
+        instance.complete = fake_complete
+        await postprocess(
+            turns=turns,
+            llm_base_url="http://localhost:1234/v1",
+            llm_model="qwen",
+            token_budget=10000,
+            speaker_a_name="Alex",
+            speaker_b_name="Jordan",
+        )
+
+    assert "Alex" in captured["system"]
+    assert "Jordan" in captured["system"]
+    assert "Refer to Alex as \"you\"" in captured["system"]
+
+
 def test_parse_focus_points_from_markdown():
     from recalld.pipeline.postprocess import parse_focus_points
     md = "## Focus\n\n- [ ] Do thing one\n- [ ] Do thing two\n\nExtra text"

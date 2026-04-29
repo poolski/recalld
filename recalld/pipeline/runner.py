@@ -147,6 +147,9 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
             _save(job)
             _emit(job, "postprocess", "running")
             labelled = [LabelledTurn(**t) for t in json.loads(Path(job.aligned_path).read_text())]
+            cat = next((c for c in cfg.categories if c.id == job.category_id), None)
+            speaker_a_name = cat.speaker_a if cat else "You"
+            speaker_b_name = cat.speaker_b if cat else "Coach"
 
             ctx_len = await detect_context_length(cfg.llm_base_url, cfg.llm_model)
             budget = token_budget(ctx_len, cfg.llm_context_headroom)
@@ -158,6 +161,8 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
                     llm_model=cfg.llm_model,
                     token_budget=budget,
                     progress_cb=lambda msg: _emit(job, "postprocess", "running", msg),
+                    speaker_a_name=speaker_a_name,
+                    speaker_b_name=speaker_b_name,
                 )
             except Exception as e:
                 job.status = JobStatus.failed
