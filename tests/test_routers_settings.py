@@ -31,8 +31,8 @@ class _FakeAsyncClient:
 def test_settings_page_shows_provider_models(monkeypatch):
     async def fake_list_models(base_url: str, selected_model: str):
         return [
-            ProviderModel(id="qwen/qwen3-4b", context_length=32768, selected=True),
-            ProviderModel(id="qwen/qwen3-8b", context_length=65536, selected=False),
+            ProviderModel(id="qwen/qwen3-4b", max_context_length=32768, loaded_context_length=16384, selected=True),
+            ProviderModel(id="qwen/qwen3-8b", max_context_length=65536, selected=False),
         ]
 
     monkeypatch.setattr("recalld.routers.settings.list_available_models", fake_list_models)
@@ -46,7 +46,11 @@ def test_settings_page_shows_provider_models(monkeypatch):
     assert "qwen/qwen3-8b" in resp.text
     assert "32,768" in resp.text
     assert "65,536" in resp.text
+    assert "16,384" in resp.text
     assert "Current model" in resp.text
+    assert "Loaded" in resp.text
+    assert "Loaded context length" in resp.text
+    assert "Maximum context length" in resp.text
     assert "Refresh models" in resp.text
 
 
@@ -74,8 +78,8 @@ def test_settings_page_shows_vault_name_field():
 def test_save_settings_persists_selected_provider_model(monkeypatch):
     async def fake_list_models(base_url: str, selected_model: str):
         return [
-            ProviderModel(id="qwen/qwen3-4b", context_length=32768, selected=selected_model == "qwen/qwen3-4b"),
-            ProviderModel(id="qwen/qwen3-8b", context_length=65536, selected=selected_model == "qwen/qwen3-8b"),
+            ProviderModel(id="qwen/qwen3-4b", max_context_length=32768, selected=selected_model == "qwen/qwen3-4b"),
+            ProviderModel(id="qwen/qwen3-8b", max_context_length=65536, selected=selected_model == "qwen/qwen3-8b"),
         ]
 
     monkeypatch.setattr("recalld.routers.settings.list_available_models", fake_list_models)
@@ -187,7 +191,7 @@ def test_status_bar_renders_clickable_indicators(monkeypatch):
 def test_status_details_returns_selected_model_and_tooling(monkeypatch):
     async def fake_list_models(base_url: str, selected_model: str):
         return [
-            ProviderModel(id="qwen/qwen3-4b", context_length=32768, selected=True),
+            ProviderModel(id="qwen/qwen3-4b", max_context_length=32768, loaded_context_length=16384, selected=True),
         ]
 
     def fake_run(cmd, capture_output, text, check, timeout):
@@ -208,7 +212,9 @@ def test_status_details_returns_selected_model_and_tooling(monkeypatch):
     assert payload["title"] == "LLM"
     assert payload["items"][0]["label"] == "Selected model"
     assert payload["items"][0]["value"] == "qwen/qwen3-4b"
-    assert any(item["label"] == "Context length" for item in payload["items"])
+    assert any(item["label"] == "Loaded" and item["value"] == "Yes" for item in payload["items"])
+    assert any(item["label"] == "Loaded context length" and item["value"] == "16,384" for item in payload["items"])
+    assert any(item["label"] == "Maximum context length" and item["value"] == "32,768" for item in payload["items"])
 
 
 def test_status_details_returns_vault_name_for_obsidian(monkeypatch):

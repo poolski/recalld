@@ -6,7 +6,7 @@ from pathlib import Path
 from recalld.config import Config, load_config
 from recalld.events import bus
 from recalld.jobs import Job, JobStage, JobStatus, save_job, DEFAULT_SCRATCH_ROOT
-from recalld.llm.context import detect_context_length, token_budget
+from recalld.llm.context import ensure_loaded_context_length, token_budget
 from recalld.pipeline.align import align
 from recalld.pipeline.diarise import diarise, DiariseError
 from recalld.pipeline.ingest import ingest, IngestError
@@ -207,7 +207,7 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
             speaker_a_name = cat.speaker_a if cat else "You"
             speaker_b_name = cat.speaker_b if cat else "Coach"
 
-            ctx_len = await detect_context_length(cfg.llm_base_url, cfg.llm_model)
+            ctx_len = await ensure_loaded_context_length(cfg.llm_base_url, cfg.llm_model)
             budget = token_budget(ctx_len, cfg.llm_context_headroom)
 
             try:

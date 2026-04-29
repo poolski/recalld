@@ -32,6 +32,36 @@ async def test_llm_client_uses_lmstudio_chat_endpoint_and_payload():
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_llm_client_loads_model_with_context_length_and_auth_header(monkeypatch):
+    route = respx.post("http://localhost:1234/api/v1/models/load").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "type": "llm",
+                "instance_id": "qwen/qwen3-4b",
+                "status": "loaded",
+                "load_config": {"context_length": 16384},
+            },
+        )
+    )
+    monkeypatch.setenv("LM_API_TOKEN", "secret-token")
+
+    client = LLMClient(base_url="http://localhost:1234", model="qwen/qwen3-4b")
+    result = await client.load_model(context_length=16384)
+
+    assert route.called
+    request = route.calls[0].request
+    assert json.loads(request.content.decode()) == {
+        "model": "qwen/qwen3-4b",
+        "context_length": 16384,
+        "echo_load_config": True,
+    }
+    assert request.headers["authorization"] == "Bearer secret-token"
+    assert result["status"] == "loaded"
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_llm_client_strips_trailing_v1_from_base_url():
     route = respx.post("http://localhost:1234/api/v1/chat").mock(
         return_value=httpx.Response(200, json={"output": "ok"})

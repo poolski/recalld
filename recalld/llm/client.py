@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Callable, Optional
 
 import httpx
@@ -11,13 +12,25 @@ class LLMClient:
         self.model = model
         self.timeout = timeout
 
-    def _chat_url(self) -> str:
+    def _api_v1_url(self, path: str) -> str:
         base = self.base_url
         if base.endswith("/api/v1"):
-            return f"{base}/chat"
+            return f"{base}{path}"
         if base.endswith("/v1"):
             base = base[:-3]
-        return f"{base}/api/v1/chat"
+        return f"{base}/api/v1{path}"
+
+    def _headers(self) -> dict[str, str]:
+        token = os.getenv("LM_API_TOKEN")
+        if not token:
+            return {}
+        return {"Authorization": f"Bearer {token}"}
+
+    def _chat_url(self) -> str:
+        return self._api_v1_url("/chat")
+
+    def _models_load_url(self) -> str:
+        return self._api_v1_url("/models/load")
 
     def _parse_output(self, data: dict) -> str:
         if data.get("type") == "chat.end":
@@ -55,10 +68,22 @@ class LLMClient:
             "stream": False,
         }
         async with httpx.AsyncClient(verify=False, timeout=self.timeout) as client:
-            resp = await client.post(self._chat_url(), json=payload)
+            resp = await client.post(self._chat_url(), json=payload, headers=self._headers())
             resp.raise_for_status()
             data = resp.json()
             return self._parse_output(data)
+
+    async def load_model(self, context_length: int | None = None, echo_load_config: bool = True) -> dict:
+        payload = {
+            "model": self.model,
+            "echo_load_config": echo_load_config,
+        }
+        if context_length is not None:
+            payload["context_length"] = context_length
+        async with httpx.AsyncClient(verify=False, timeout=self.timeout) as client:
+            resp = await client.post(self._models_load_url(), json=payload, headers=self._headers())
+            resp.raise_for_status()
+            return resp.json()
 
     async def stream(
         self,
@@ -75,7 +100,7 @@ class LLMClient:
             "stream": True,
         }
         async with httpx.AsyncClient(verify=False, timeout=self.timeout) as client:
-            async with client.stream("POST", self._chat_url(), json=payload) as resp:
+            async with client.stream("POST", self._chat_url(), json=payload, headers=self._headers()) as resp:
                 resp.raise_for_status()
                 event_type = None
                 data_lines: list[str] = []

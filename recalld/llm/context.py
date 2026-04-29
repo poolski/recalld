@@ -5,14 +5,27 @@ from dataclasses import dataclass
 
 import httpx
 
+from recalld.llm.client import LLMClient
+
 FALLBACK_CONTEXT_LENGTH = 6000
 
 
 @dataclass(eq=True, frozen=True)
 class ProviderModel:
     id: str
-    context_length: int | None
+    max_context_length: int | None
+    loaded_context_length: int | None = None
     selected: bool = False
+
+    @property
+    def context_length(self) -> int | None:
+        if self.loaded_context_length is not None:
+            return self.loaded_context_length
+        return self.max_context_length
+
+    @property
+    def is_loaded(self) -> bool:
+        return self.loaded_context_length is not None
 
 
 def _models_urls(base_url: str) -> list[str]:
@@ -48,6 +61,17 @@ def _context_from_loaded_instances(entry: dict) -> int | None:
     return None
 
 
+def _max_context_length(entry: dict) -> int | None:
+    return _as_int(entry.get("max_context_length")) or _as_int(entry.get("context_length"))
+
+
+def _selected_model(models: list[ProviderModel], selected_model: str) -> ProviderModel | None:
+    for model in models:
+        if model.id == selected_model:
+            return model
+    return None
+
+
 def _normalize_model_entries(data: dict) -> list[ProviderModel]:
     if isinstance(data.get("data"), list):
         models: list[ProviderModel] = []
@@ -57,8 +81,8 @@ def _normalize_model_entries(data: dict) -> list[ProviderModel]:
             model_id = entry.get("id")
             if not model_id:
                 continue
-            length = _as_int(entry.get("context_length")) or _as_int(entry.get("max_context_length"))
-            models.append(ProviderModel(id=str(model_id), context_length=length))
+            length = _max_context_length(entry)
+            models.append(ProviderModel(id=str(model_id), max_context_length=length))
         return models
 
     if isinstance(data.get("models"), list):
@@ -71,8 +95,15 @@ def _normalize_model_entries(data: dict) -> list[ProviderModel]:
             model_id = entry.get("key") or entry.get("id")
             if not model_id:
                 continue
-            length = _context_from_loaded_instances(entry) or _as_int(entry.get("context_length")) or _as_int(entry.get("max_context_length"))
-            models.append(ProviderModel(id=str(model_id), context_length=length))
+            loaded_length = _context_from_loaded_instances(entry)
+            max_length = _max_context_length(entry)
+            models.append(
+                ProviderModel(
+                    id=str(model_id),
+                    max_context_length=max_length,
+                    loaded_context_length=loaded_length,
+                )
+            )
         return models
 
     return []
@@ -96,7 +127,8 @@ async def list_available_models(base_url: str, selected_model: str) -> list[Prov
     return [
         ProviderModel(
             id=model.id,
-            context_length=model.context_length,
+            max_context_length=model.max_context_length,
+            loaded_context_length=model.loaded_context_length,
             selected=model.id == selected_model,
         )
         for model in _normalize_model_entries(data)
@@ -113,6 +145,42 @@ async def detect_context_length(base_url: str, model: str) -> int:
         if entry.context_length:
             return entry.context_length
     return FALLBACK_CONTEXT_LENGTH
+
+
+def _context_length_from_load_response(data: dict) -> int | None:
+    if not isinstance(data, dict):
+        return None
+    load_config = data.get("load_config")
+    if isinstance(load_config, dict):
+        length = _as_int(load_config.get("context_length"))
+        if length:
+            return length
+    return _as_int(data.get("context_length"))
+
+
+async def ensure_loaded_context_length(base_url: str, model: str) -> int:
+    """Ensure the selected LM Studio model is loaded, then return its runtime context length."""
+    models = await list_available_models(base_url, selected_model=model)
+    selected = _selected_model(models, model)
+    if selected is None:
+        return await detect_context_length(base_url, model)
+
+    if selected.loaded_context_length:
+        return selected.loaded_context_length
+
+    max_length = selected.max_context_length or selected.context_length or FALLBACK_CONTEXT_LENGTH
+    client = LLMClient(base_url=base_url, model=model)
+    load_response = await client.load_model(context_length=max_length)
+    loaded_length = _context_length_from_load_response(load_response)
+    refreshed = await list_available_models(base_url, selected_model=model)
+    refreshed_selected = _selected_model(refreshed, model)
+    if refreshed_selected and refreshed_selected.context_length:
+        return refreshed_selected.context_length
+
+    if loaded_length:
+        return loaded_length
+
+    return max_length
 
 
 def token_budget(context_length: int, headroom: float = 0.8) -> int:
