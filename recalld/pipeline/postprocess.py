@@ -11,21 +11,30 @@ from recalld.pipeline.align import LabelledTurn
 
 SYSTEM_PROMPT_TEMPLATE = """\
 You are a session notes assistant. Given a transcript, produce:
-1. A 2-3 paragraph summary under the heading "## Summary". Refer to {speaker_a_name} as "you" in the summary.
-   Refer to {speaker_b_name} by name. Use line breaks to separate themes, but do not use any other headings or formatting.
+1. A summary under the heading "## Summary".
+   - Refer to {speaker_a_name} as "you" and {speaker_b_name} by name.
+   - Use 3-5 concise paragraphs to keep the text readable.
+   - Paragraphs should be at most 3 sentences long.
+   - Avoid long, dense blocks of text.
+   - Separate distinct themes into their own paragraphs.
+   - Do not use any other headings or formatting.
 2. A short list of focus points or action items under "## Focus" using markdown checkboxes (- [ ] item)
 Write clearly and concisely. Do not add extra headings or commentary."""
 
 MAP_SYSTEM_PROMPT = """\
 You are summarising one section of a longer session transcript.
-Produce a brief summary of the key themes and any action items mentioned.
+Produce a brief, concise summary of the key themes and any action items mentioned.
+Keep it short and avoid dense blocks of text.
 Format: plain prose, no headings."""
 
 REDUCE_SYSTEM_PROMPT_TEMPLATE = """\
 You are combining partial summaries of a coaching session transcript into final notes.
 Produce:
-1. A 2-3 paragraph summary under "## Summary". Refer to {speaker_a_name} as "you" in the summary.
-   Refer to {speaker_b_name} by name. Use line breaks to separate themes, but do not use any other headings or formatting.
+1. A summary under "## Summary".
+   - Refer to {speaker_a_name} as "you" and {speaker_b_name} by name.
+   - Use 3-5 concise paragraphs to keep the text readable.
+   - Separate distinct themes into their own paragraphs.
+   - Do not use any other headings or formatting.
 2. A focused list of action items under "## Focus" using markdown checkboxes (- [ ] item)"""
 
 
@@ -45,10 +54,16 @@ def parse_focus_points(markdown: str) -> list[str]:
 
 
 def parse_summary(markdown: str) -> str:
-    """Extract content between ## Summary and the next ## heading."""
-    match = re.search(r"## Summary\s*\n(.*?)(?=\n##|\Z)", markdown, re.DOTALL)
-    if match:
-        return match.group(1).strip()
+    """Extract content after ## Summary, excluding following headings if present."""
+    marker = "## Summary"
+    if marker in markdown:
+        parts = markdown.split(marker, 1)
+        content = parts[1].lstrip()
+        # Look for next heading to stop at
+        next_heading = content.find("\n##")
+        if next_heading != -1:
+            return content[:next_heading].strip()
+        return content.strip()
     return markdown.strip()
 
 
@@ -70,6 +85,7 @@ async def postprocess(
     llm_model: str,
     token_budget: int,
     progress_cb: Optional[Callable[[str], None]] = None,
+    stream_cb: Optional[Callable[[str], None]] = None,
     speaker_a_name: str = "You",
     speaker_b_name: str = "Coach",
 ) -> PostProcessResult:
@@ -80,7 +96,12 @@ async def postprocess(
 
     if strategy.strategy == "single":
         transcript_text = _turns_to_text(turns)
-        raw = await client.complete(single_prompt, transcript_text)
+        raw = ""
+        async for token in client.stream(single_prompt, transcript_text):
+            raw += token
+            if stream_cb:
+                stream_cb(parse_summary(raw))
+
         return PostProcessResult(
             summary=parse_summary(raw),
             focus_points=parse_focus_points(raw),
@@ -91,19 +112,25 @@ async def postprocess(
 
     # Map phase
     if progress_cb:
-        progress_cb(f"Detected {strategy.topic_count} topics, summarising each…")
+        progress_cb(f"Transcript is too large for one summary pass; splitting into {len(strategy.chunks)} chunks.")
 
     partial_summaries = []
     for i, chunk in enumerate(strategy.chunks):
         chunk_text = _turns_to_text(chunk)
+        if progress_cb:
+            progress_cb(f"Summarising chunk {i + 1}/{len(strategy.chunks)}.")
         partial = await client.complete(MAP_SYSTEM_PROMPT, chunk_text)
         partial_summaries.append(partial)
         if progress_cb:
-            progress_cb(f"Summarised topic {i + 1}/{strategy.topic_count}")
+            progress_cb(f"Completed chunk {i + 1}/{len(strategy.chunks)}.")
 
     # Reduce phase
     combined = "\n\n---\n\n".join(partial_summaries)
-    raw = await client.complete(reduce_prompt, combined)
+    raw = ""
+    async for token in client.stream(reduce_prompt, combined):
+        raw += token
+        if stream_cb:
+            stream_cb(parse_summary(raw))
 
     return PostProcessResult(
         summary=parse_summary(raw),

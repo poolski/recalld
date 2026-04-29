@@ -1,6 +1,6 @@
 import pytest
 from datetime import date
-from recalld.pipeline.vault import render_session_note, render_focus_section, VaultWriter
+from recalld.pipeline.vault import render_session_note, render_session_note_preview, render_focus_section, VaultWriter
 from recalld.pipeline.align import LabelledTurn
 from recalld.pipeline.postprocess import PostProcessResult
 from unittest.mock import AsyncMock, patch
@@ -72,6 +72,20 @@ def test_render_session_note_failed_postprocess():
         turns=_turns(),
     )
     assert "post_processing: failed" in note
+
+
+def test_render_session_note_preview_strips_frontmatter_and_truncates():
+    note = render_session_note_preview(
+        session_date=date(2025, 4, 28),
+        category="ADHD Coaching",
+        speakers=["You", "Coach"],
+        result=_result(summary="A" * 2000),
+        turns=_turns(),
+        max_chars=200,
+    )
+    assert "date:" not in note
+    assert note.endswith("...")
+    assert "## Summary" in note
 
 
 def test_render_focus_section():

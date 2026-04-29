@@ -10,7 +10,10 @@ from recalld.pipeline.align import LabelledTurn
 from recalld.pipeline.postprocess import PostProcessResult
 
 
-def render_session_note(
+PREVIEW_MAX_CHARS = 1200
+
+
+def _render_session_note_body(
     session_date: date,
     category: str,
     speakers: list[str],
@@ -46,6 +49,51 @@ post_processing: {post_processing_status}
 > [!note]- Full transcript
 {transcript_lines}
 """
+
+
+def render_session_note(
+    session_date: date,
+    category: str,
+    speakers: list[str],
+    result: Optional[PostProcessResult],
+    turns: list[LabelledTurn],
+) -> str:
+    return _render_session_note_body(session_date, category, speakers, result, turns)
+
+
+def _strip_frontmatter(markdown: str) -> str:
+    if markdown.startswith("---\n"):
+        parts = markdown.split("\n---\n", 1)
+        if len(parts) == 2:
+            return parts[1].lstrip()
+    return markdown.strip()
+
+
+def _truncate_preview(markdown: str, max_chars: int = PREVIEW_MAX_CHARS) -> str:
+    text = markdown.strip()
+    if len(text) <= max_chars:
+        return text
+
+    cutoff = text.rfind("\n\n", 0, max_chars)
+    if cutoff < max_chars // 2:
+        cutoff = text.rfind("\n", 0, max_chars)
+    if cutoff == -1:
+        cutoff = max_chars
+
+    return text[:cutoff].rstrip() + "\n\n..."
+
+
+def render_session_note_preview(
+    session_date: date,
+    category: str,
+    speakers: list[str],
+    result: Optional[PostProcessResult],
+    turns: list[LabelledTurn],
+    max_chars: int = PREVIEW_MAX_CHARS,
+) -> str:
+    """Return a shortened markdown excerpt suitable for HTML preview rendering."""
+    note = _render_session_note_body(session_date, category, speakers, result, turns)
+    return _truncate_preview(_strip_frontmatter(note), max_chars=max_chars)
 
 
 def render_focus_section(session_date: date, focus_points: list[str]) -> str:

@@ -37,6 +37,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
 // SSE-based stage progress updates
 async function connectSSE(jobId, initialStages = {}) {
+  if (window.marked) {
+    marked.setOptions({ breaks: true, gfm: true });
+  }
   applyStageStatuses(initialStages);
   await hydrateJobState(jobId);
   const evtSource = new EventSource(`/jobs/${jobId}/events`);
@@ -46,16 +49,18 @@ async function connectSSE(jobId, initialStages = {}) {
     const event = JSON.parse(e.data);
     const { stage, status, message, preview, topic_count, strategy,
             obsidian_uri, summary, focus_points, can_skip, can_write_transcript_only,
-            can_confirm_vault, can_confirm_speakers, can_swap_speakers } = event;
+            can_confirm_vault, can_confirm_speakers, can_swap_speakers, vault_preview, filename } = event;
 
     updateStage(stage, status, message);
 
     if (preview) showPreview(preview);
     if (topic_count) showChunkInfo(topic_count, strategy);
-    if (summary || focus_points || obsidian_uri) showResults(obsidian_uri, summary, focus_points);
+    if (summary !== undefined && summary !== null) showPartialSummary(summary);
+    if (focus_points || obsidian_uri) showResults(obsidian_uri, summary, focus_points);
     if (can_skip) showDiariseSkip(stage);
     if (can_write_transcript_only) showPostprocessFallback(stage);
-    if (can_confirm_vault) showVaultConfirm(stage);
+    if (can_confirm_vault) showVaultConfirm(stage, filename);
+    if (vault_preview) showVaultPreview(vault_preview);
     if (can_confirm_speakers || can_swap_speakers) showSpeakerConfirm(stage);
 
     appendStageLog(stage, `[${stage}] ${status}${message ? ': ' + message : ''}`);
@@ -72,9 +77,11 @@ async function hydrateJobState(jobId) {
     applyStageStatuses(state.stage_statuses || {});
     if (state.preview) showPreview(state.preview);
     if (state.topic_count) showChunkInfo(state.topic_count, state.strategy);
-    if (state.summary || state.focus_points) showResults(null, state.summary || "", state.focus_points || []);
+    if (state.summary !== undefined && state.summary !== null) showPartialSummary(state.summary);
+    if (state.focus_points || state.obsidian_uri) showResults(state.obsidian_uri, state.summary || "", state.focus_points || []);
     if (state.error) updateStage(state.current_stage, state.stage_statuses[state.current_stage], state.error);
-    if (state.can_confirm_vault) showVaultConfirm("vault");
+    if (state.can_confirm_vault) showVaultConfirm("vault", state.filename);
+    if (state.vault_preview) showVaultPreview(state.vault_preview);
     if (state.can_confirm_speakers || state.can_swap_speakers) showSpeakerConfirm("align");
   } catch (_) {
     // Fall back to template-provided state if the refresh request fails.
@@ -101,14 +108,43 @@ function updateStage(stage, status, message) {
   }
   if (status !== "awaiting_confirmation") disableStageConfirmation(stage);
   if (msg && message) msg.textContent = message;
+
   if (header && (status === "running" || status === "failed" || status === "awaiting_confirmation")) {
     setStageExpanded(stage, true);
   }
 }
 
+function clearStageResults(stage) {
+  if (stage === "postprocess") {
+    const summaryEl = document.getElementById("result-summary");
+    const focusEl = document.getElementById("result-focus");
+    if (summaryEl) summaryEl.innerHTML = "";
+    if (focusEl) focusEl.innerHTML = "";
+    const vaultPreviewEl = document.getElementById("vault-preview");
+    if (vaultPreviewEl) {
+      vaultPreviewEl.innerHTML = "";
+      vaultPreviewEl.style.display = "none";
+    }
+  }
+  if (stage === "align") {
+    const previewEl = document.getElementById("align-preview");
+    if (previewEl) {
+      previewEl.innerHTML = "";
+      previewEl.style.display = "none";
+    }
+  }
+  if (stage === "vault") {
+    const previewEl = document.getElementById("vault-preview");
+    if (previewEl) {
+      previewEl.innerHTML = "";
+      previewEl.style.display = "none";
+    }
+  }
+}
+
 function showPreview(text) {
   const el = document.getElementById("align-preview");
-  if (el) { el.textContent = text; el.style.display = "block"; }
+  if (el) { el.innerHTML = marked.parse(text); el.style.display = "block"; }
   setStageExpanded("align", true);
 }
 
@@ -123,14 +159,22 @@ function showChunkInfo(count, strategy) {
   setStageExpanded("postprocess", true);
 }
 
+function showPartialSummary(summary) {
+  const resultsEl = document.getElementById("postprocess-results");
+  const summaryEl = document.getElementById("result-summary");
+  if (summaryEl) summaryEl.innerHTML = marked.parse(summary);
+  if (resultsEl) resultsEl.style.display = "block";
+  setStageExpanded("postprocess", true);
+}
+
 function showResults(uri, summary, focusPoints) {
   const resultsEl = document.getElementById("postprocess-results");
   if (!resultsEl) return;
   const summaryEl = document.getElementById("result-summary");
   const focusEl = document.getElementById("result-focus");
   const linkEl = document.getElementById("obsidian-link");
-  if (summaryEl) summaryEl.textContent = summary;
-  if (focusEl) focusEl.innerHTML = focusPoints.map(p => `<li>${p}</li>`).join("");
+  if (summary && summaryEl) summaryEl.innerHTML = marked.parse(summary);
+  if (focusPoints && focusEl) focusEl.innerHTML = focusPoints.map(p => `<li>${marked.parseInline(p)}</li>`).join("");
   if (linkEl) {
     if (uri) {
       linkEl.href = uri;
@@ -157,12 +201,24 @@ function showPostprocessFallback(stage) {
   setStageExpanded("postprocess", true);
 }
 
-function showVaultConfirm(stage) {
+function showVaultConfirm(stage, filename) {
   const el = document.getElementById("vault-confirm-btn");
+  const controls = document.getElementById("vault-confirm-controls");
+  const input = document.getElementById("vault-filename");
+  if (input && filename) input.value = filename;
+  if (controls) controls.style.display = "block";
   if (el) {
     el.style.display = "inline-block";
     el.disabled = false;
   }
+  setStageExpanded("vault", true);
+}
+
+function showVaultPreview(text) {
+  const el = document.getElementById("vault-preview");
+  if (!el || !text) return;
+  el.innerHTML = marked.parse(text);
+  el.style.display = "block";
   setStageExpanded("vault", true);
 }
 
@@ -179,6 +235,14 @@ function showSpeakerConfirm(stage) {
 }
 
 function disableStageConfirmation(stage) {
+  if (stage === "diarise") {
+    const el = document.getElementById("diarise-skip-btn");
+    if (el) el.style.display = "none";
+  }
+  if (stage === "postprocess") {
+    const el = document.getElementById("postprocess-fallback-btn");
+    if (el) el.style.display = "none";
+  }
   if (stage === "align") {
     const controls = document.getElementById("speaker-confirm-controls");
     const confirm = document.getElementById("speaker-confirm-btn");
@@ -188,7 +252,9 @@ function disableStageConfirmation(stage) {
     if (swap) swap.disabled = true;
   }
   if (stage === "vault") {
+    const controls = document.getElementById("vault-confirm-controls");
     const el = document.getElementById("vault-confirm-btn");
+    if (controls) controls.style.display = "none";
     if (el) {
       el.style.display = "none";
       el.disabled = true;

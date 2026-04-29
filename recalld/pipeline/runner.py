@@ -12,7 +12,7 @@ from recalld.pipeline.diarise import diarise, DiariseError
 from recalld.pipeline.ingest import ingest, IngestError
 from recalld.pipeline.postprocess import postprocess
 from recalld.pipeline.transcribe import transcribe
-from recalld.pipeline.vault import VaultWriter, render_session_note, render_focus_section
+from recalld.pipeline.vault import VaultWriter, render_session_note, render_session_note_preview, render_focus_section
 from datetime import date
 
 
@@ -161,6 +161,7 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
                     llm_model=cfg.llm_model,
                     token_budget=budget,
                     progress_cb=lambda msg: _emit(job, "postprocess", "running", msg),
+                    stream_cb=lambda text: _emit(job, "postprocess", "running", summary=text),
                     speaker_a_name=speaker_a_name,
                     speaker_b_name=speaker_b_name,
                 )
@@ -182,11 +183,23 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
             job.postprocess_path = str(pp_path)
             job.topic_count = result.topic_count
             job.chunk_strategy = result.strategy
+
+            if not job.filename and cat:
+                session_date = job.created_at.date()
+                job.filename = f"{session_date.isoformat()} {cat.name}.md"
+
             _set_stage_status(job, "postprocess", "done")
             job.current_stage = JobStage.vault
             job.status = JobStatus.pending
             _set_stage_status(job, "vault", "awaiting_confirmation")
             _save(job)
+            preview = render_session_note_preview(
+                session_date=job.created_at.date(),
+                category=cat.name if cat else "",
+                speakers=[cat.speaker_a, cat.speaker_b] if cat else ["You", "Coach"],
+                result=result,
+                turns=labelled,
+            ) if cat else ""
             _emit(
                 job,
                 "postprocess",
@@ -196,7 +209,7 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
                 summary=result.summary,
                 focus_points=result.focus_points,
             )
-            _emit(job, "vault", "awaiting_confirmation", can_confirm_vault=True)
+            _emit(job, "vault", "awaiting_confirmation", can_confirm_vault=True, filename=job.filename, vault_preview=preview)
             return
 
         # --- Vault write ---
@@ -206,7 +219,18 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
             from recalld.pipeline.postprocess import PostProcessResult
 
             if job.stage_statuses.get("vault") == "awaiting_confirmation":
-                _emit(job, "vault", "awaiting_confirmation", can_confirm_vault=True)
+                labelled = [LabelledTurn(**t) for t in json.loads(Path(job.aligned_path).read_text())]
+                pp_data = json.loads(Path(job.postprocess_path).read_text()) if job.postprocess_path else None
+                result = PostProcessResult(**pp_data, raw_response="") if pp_data else None
+                cat = next((c for c in cfg.categories if c.id == job.category_id), None)
+                preview = render_session_note_preview(
+                    session_date=job.created_at.date(),
+                    category=cat.name if cat else "",
+                    speakers=[cat.speaker_a, cat.speaker_b] if cat else ["You", "Coach"],
+                    result=result,
+                    turns=labelled,
+                ) if cat and result else ""
+                _emit(job, "vault", "awaiting_confirmation", can_confirm_vault=True, filename=job.filename, vault_preview=preview)
                 return
 
             _set_stage_status(job, "vault", "running")
@@ -228,8 +252,8 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
                 return
 
             writer = VaultWriter(cfg.obsidian_api_url, cfg.obsidian_api_key)
-            session_date = date.today()
-            filename = f"{session_date.isoformat()} {cat.name}.md"
+            session_date = job.created_at.date()
+            filename = job.filename or f"{session_date.isoformat()} {cat.name}.md"
             note_content = render_session_note(
                 session_date=session_date,
                 category=cat.name,
