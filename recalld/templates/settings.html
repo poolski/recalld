@@ -24,18 +24,53 @@
     <input type="url" name="llm_base_url" value="{{ cfg.llm_base_url }}">
   </div>
   <div class="field">
-    <label>Model name</label>
-    <input type="text" name="llm_model" value="{{ cfg.llm_model }}" placeholder="e.g. qwen2.5-7b-instruct">
-  </div>
-  <div class="field">
     <label>Context headroom (0.0–1.0)</label>
     <input type="number" name="llm_context_headroom" value="{{ cfg.llm_context_headroom }}" step="0.05" min="0.1" max="1.0">
   </div>
-  {% if detected_context_length %}
-  <p style="font-size:13px; color:var(--muted); margin-top:-8px; margin-bottom:16px">
-    Detected context length: {{ detected_context_length }} tokens
-  </p>
-  {% endif %}
+  <div class="field">
+    <label>Current model</label>
+    <div class="card" style="padding:14px 16px; margin-top:8px">
+      <div style="display:flex; gap:16px; flex-wrap:wrap; align-items:center">
+        <span><strong>Current model</strong>: {{ current_model.id if current_model else (cfg.llm_model or "Not selected") }}</span>
+        <span><strong>Context length</strong>: {{ "{:,}".format(detected_context_length) if detected_context_length else "Unknown" }} tokens</span>
+        <span><strong>Headroom budget</strong>: {{ "{:,}".format((detected_context_length * cfg.llm_context_headroom) | int) if detected_context_length else "Unknown" }} tokens</span>
+      </div>
+    </div>
+  </div>
+  <div class="field">
+    <label>Available models</label>
+    {% if provider_models %}
+    <div style="overflow-x:auto">
+      <table style="width:100%; border-collapse:collapse; margin-top:8px">
+        <thead>
+          <tr style="text-align:left; border-bottom:1px solid var(--border)">
+            <th style="padding:10px 12px">Use</th>
+            <th style="padding:10px 12px">Model</th>
+            <th style="padding:10px 12px">Context length</th>
+            <th style="padding:10px 12px">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for model in provider_models %}
+          <tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:12px">
+              <input type="radio" name="llm_model" value="{{ model.id }}" {% if model.selected %}checked{% endif %}>
+            </td>
+            <td style="padding:12px"><code>{{ model.id }}</code></td>
+            <td style="padding:12px">{{ "{:,}".format(model.context_length) if model.context_length else "Unknown" }}</td>
+            <td style="padding:12px">{% if model.selected %}Current{% else %}Available{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <input type="text" name="llm_model" value="{{ cfg.llm_model }}" placeholder="e.g. qwen/qwen3-4b">
+    <p style="font-size:13px; color:var(--muted); margin-top:8px">
+      No models were discovered from the provider, so the model name must be entered manually.
+    </p>
+    {% endif %}
+  </div>
 
   <h2>Transcription</h2>
   <div class="field">
