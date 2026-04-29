@@ -35,13 +35,7 @@
 <h2>Incomplete jobs</h2>
 <ul class="job-list">
   {% for job in incomplete_jobs %}
-  <li class="job-item">
-    <span class="filename">{{ job.original_filename }}</span>
-    <span class="stage">{{ job.current_stage.value }}</span>
-    <form action="/jobs/{{ job.id }}/resume" method="post" style="display:inline">
-      <button type="submit" class="btn-ghost" style="padding:4px 12px;font-size:12px">Resume</button>
-    </form>
-  </li>
+  {% include "partials/job_row.html" %}
   {% endfor %}
 </ul>
 {% endif %}
