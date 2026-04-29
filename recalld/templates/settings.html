@@ -38,7 +38,10 @@
     </div>
   </div>
   <div class="field">
-    <label>Available models</label>
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:12px">
+      <label style="margin:0">Available models</label>
+      <button type="button" class="btn-ghost" onclick="window.location.href='/settings/'">Refresh models</button>
+    </div>
     {% if provider_models %}
     <div style="overflow-x:auto">
       <table style="width:100%; border-collapse:collapse; margin-top:8px">

@@ -24,6 +24,7 @@ def test_settings_page_shows_provider_models(monkeypatch):
     assert "32,768" in resp.text
     assert "65,536" in resp.text
     assert "Current model" in resp.text
+    assert "Refresh models" in resp.text
 
 
 def test_save_settings_persists_selected_provider_model(monkeypatch):
@@ -55,4 +56,3 @@ def test_save_settings_persists_selected_provider_model(monkeypatch):
     assert cfg.llm_context_headroom == 0.75
     assert "Settings saved." in resp.text
     assert "qwen/qwen3-8b" in resp.text
-

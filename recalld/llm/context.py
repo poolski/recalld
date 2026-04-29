@@ -24,6 +24,58 @@ def _models_url(base_url: str) -> str:
     return f"{base}/v1/models"
 
 
+def _as_int(value) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _context_from_loaded_instances(entry: dict) -> int | None:
+    for instance in entry.get("loaded_instances", []):
+        if not isinstance(instance, dict):
+            continue
+        config = instance.get("config")
+        if not isinstance(config, dict):
+            continue
+        length = _as_int(config.get("context_length"))
+        if length:
+            return length
+    return None
+
+
+def _normalize_model_entries(data: dict) -> list[ProviderModel]:
+    if isinstance(data.get("data"), list):
+        models: list[ProviderModel] = []
+        for entry in data["data"]:
+            if not isinstance(entry, dict):
+                continue
+            model_id = entry.get("id")
+            if not model_id:
+                continue
+            length = _as_int(entry.get("context_length")) or _as_int(entry.get("max_context_length"))
+            models.append(ProviderModel(id=str(model_id), context_length=length))
+        return models
+
+    if isinstance(data.get("models"), list):
+        models = []
+        for entry in data["models"]:
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("type") != "llm":
+                continue
+            model_id = entry.get("key") or entry.get("id")
+            if not model_id:
+                continue
+            length = _context_from_loaded_instances(entry) or _as_int(entry.get("context_length")) or _as_int(entry.get("max_context_length"))
+            models.append(ProviderModel(id=str(model_id), context_length=length))
+        return models
+
+    return []
+
+
 async def list_available_models(base_url: str, selected_model: str) -> list[ProviderModel]:
     """Query the provider model list and normalize it for settings and chunking decisions."""
     try:
@@ -34,18 +86,14 @@ async def list_available_models(base_url: str, selected_model: str) -> list[Prov
     except Exception:
         return []
 
-    models: list[ProviderModel] = []
-    for entry in data.get("data", []):
-        model_id = entry.get("id")
-        if not model_id:
-            continue
-        length = entry.get("context_length") or entry.get("max_context_length")
-        models.append(ProviderModel(
-            id=str(model_id),
-            context_length=int(length) if length else None,
-            selected=str(model_id) == selected_model,
-        ))
-    return models
+    return [
+        ProviderModel(
+            id=model.id,
+            context_length=model.context_length,
+            selected=model.id == selected_model,
+        )
+        for model in _normalize_model_entries(data)
+    ]
 
 
 async def detect_context_length(base_url: str, model: str) -> int:
