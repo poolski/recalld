@@ -7,7 +7,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 
 from recalld.app import templates
 from recalld.events import bus
-from recalld.jobs import DEFAULT_SCRATCH_ROOT, load_job
+from recalld.jobs import DEFAULT_SCRATCH_ROOT, delete_job, load_job
 from recalld.pipeline.runner import run_pipeline, quote_path
 
 router = APIRouter(prefix="/jobs")
@@ -17,6 +17,24 @@ router = APIRouter(prefix="/jobs")
 async def job_detail(request: Request, job_id: str):
     job = load_job(job_id)
     return templates.TemplateResponse("processing.html", {"request": request, "job": job})
+
+
+@router.get("/{job_id}/row", response_class=HTMLResponse)
+async def job_row(request: Request, job_id: str):
+    job = load_job(job_id, scratch_root=DEFAULT_SCRATCH_ROOT)
+    return templates.TemplateResponse(request, "partials/job_row.html", {"job": job})
+
+
+@router.get("/{job_id}/confirm-delete", response_class=HTMLResponse)
+async def confirm_delete(request: Request, job_id: str):
+    job = load_job(job_id, scratch_root=DEFAULT_SCRATCH_ROOT)
+    return templates.TemplateResponse(request, "partials/job_confirm_delete.html", {"job": job})
+
+
+@router.delete("/{job_id}", response_class=HTMLResponse)
+async def delete_job_route(job_id: str):
+    delete_job(job_id, scratch_root=DEFAULT_SCRATCH_ROOT)
+    return HTMLResponse("")
 
 
 @router.get("/{job_id}/events")
