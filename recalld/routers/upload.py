@@ -19,8 +19,7 @@ router = APIRouter()
 async def index(request: Request):
     cfg = load_config()
     incomplete = list_incomplete_jobs()
-    return templates.TemplateResponse("index.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "index.html", {
         "cfg": cfg,
         "incomplete_jobs": incomplete,
     })
@@ -48,8 +47,7 @@ async def upload(
     # Start pipeline in background
     asyncio.create_task(run_pipeline(job, dest, cfg))
 
-    return templates.TemplateResponse("processing.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "processing.html", {
         "job": job,
         "cfg": cfg,
     })

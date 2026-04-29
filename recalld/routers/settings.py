@@ -17,8 +17,7 @@ router = APIRouter(prefix="/settings")
 async def settings_page(request: Request):
     cfg = load_config()
     ctx_len = await detect_context_length(cfg.llm_base_url, cfg.llm_model)
-    return templates.TemplateResponse("settings.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "settings.html", {
         "cfg": cfg,
         "detected_context_length": ctx_len,
     })
@@ -49,8 +48,7 @@ async def save_settings(
     cfg.scratch_retention_days = scratch_retention_days
     save_config(cfg)
     ctx_len = await detect_context_length(cfg.llm_base_url, cfg.llm_model)
-    return templates.TemplateResponse("settings.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "settings.html", {
         "cfg": cfg,
         "detected_context_length": ctx_len,
         "saved": True,
