@@ -30,20 +30,21 @@ All required directories are created on first run — no manual setup needed.
 
 ## 2. Pipeline
 
-Each uploaded recording is processed through the following stages in sequence. Stage outputs are persisted to scratch space as each completes, enabling crash recovery and per-stage retry.
+Each uploaded recording is processed through the following stages in sequence. Stage outputs are persisted to scratch space as each completes, enabling crash recovery and resume from the last incomplete stage.
 
 1. **Ingest** — accept dropped/uploaded file; extract audio to `.wav` via `ffmpeg` if needed (handles `.m4a`, `.mp4`, etc.)
 2. **Transcribe** — `whisper.cpp` with Metal backend via `pywhispercpp`; produces word-level timestamped segments
-3. **Diarise** — `pyannote.audio` on MPS (Apple Silicon); produces speaker-turn timestamps
+3. **Diarise** — `pyannote.audio` on MPS (Apple Silicon); produces speaker-turn timestamps. The parser accepts both direct `Annotation` output and `DiarizeOutput` wrappers from current pyannote releases, preferring exclusive diarisation when available.
 4. **Align** — merge Whisper word segments with pyannote speaker turns to produce a labelled transcript; show a truncated preview (~5 exchanges) in the UI with speaker names applied (or prompt for assignment if not yet saved for this category)
 5. **Post-process** — local LLM (OpenAI-compatible endpoint) generates summary + focus points from the confirmed labelled transcript
-6. **Write to vault** — Obsidian Local REST API creates session note and appends to focus note
+6. **Vault confirmation** — the UI shows the generated summary and focus points and waits for explicit user confirmation before any vault write occurs
+7. **Write to vault** — after confirmation, Obsidian Local REST API creates the session note and appends to the focus note if configured
 
-Each stage reports progress to the UI in real time via SSE. If a stage fails, all previously completed stage outputs are preserved in scratch space so the job can be retried from the failed stage without re-running earlier steps.
+Each stage reports progress to the UI in real time via SSE. The processing page also rehydrates from the latest persisted job state on load so fast early-stage completions are not missed if the browser attaches after SSE events were emitted.
 
 ### Persistence
 
-Each stage writes its output to `~/.local/share/recalld/jobs/<job-id>/` as it completes. Job state (current stage, file paths, metadata, category) is written to `job.json` after each stage transition. On startup, `recalld` scans for incomplete jobs and surfaces them in the UI with a "Resume" button. Resuming re-runs from the last incomplete stage only.
+Each stage writes its output to `~/.local/share/recalld/jobs/<job-id>/` as it completes. Job state (current stage, per-stage status checkpoints, file paths, metadata, category) is written to `job.json` after each stage transition. On startup, `recalld` scans for incomplete jobs and surfaces them in the UI with a "Resume" button. Resuming re-runs from the last incomplete stage only, while previously completed stages are rendered as completed in the UI.
 
 ---
 
@@ -111,7 +112,7 @@ Focus points use standard markdown checkbox syntax (`- [ ]`), compatible with th
 
 ### Incomplete processing
 
-If post-processing fails, the session note is still written but marked with `post_processing: failed` in frontmatter. The focus note is not updated. The UI offers a retry option for the post-processing stage alone.
+If post-processing fails, the session note can still be written on demand via a transcript-only fallback, marked with `post_processing: failed` in frontmatter. The focus note is not updated in that path.
 
 Session note and focus note are written independently — a failure writing the focus note does not affect the session note.
 
@@ -164,16 +165,17 @@ Clicking a failed indicator shows a brief explanation and fix hint (e.g. "Start 
 
 Replaces upload screen when a job starts:
 
-- Stage-by-stage progress: Ingesting → Transcribing → Diarising → Aligning → Post-processing → Writing to vault
-- Each stage: spinner while running, checkmark when done, error message + retry button if failed
+- Stage-by-stage progress: Ingesting → Transcribing → Diarising → Aligning → Post-processing → Vault confirmation → Writing to vault
+- Each stage: spinner while running, checkmark when done, explicit status preserved across refresh/resume, and recovery action when failed
 - After Align: truncated preview (~5 exchanges) with speaker names applied; "Who is who?" prompt shown if names not yet saved for this category
 - During Post-processing: detected topic count and chunk strategy shown if applicable
+- Before vault write: generated summary and focus points are shown in-browser and the user must press a confirmation button before any note is written
 
 ### Results screen
 
-- Summary and focus points displayed in browser after vault write
+- Summary and focus points displayed in browser before and after vault write
 - Link to open session note in Obsidian via `obsidian://` URI
-- Option to reprocess post-processing stage only (e.g. to retry with a different model)
+- Transcript-only vault write fallback offered if post-processing fails
 
 ### Debug log panel
 
@@ -220,13 +222,14 @@ Stored at `~/.config/recalld/config.json`. Created on first run with universal d
 
 ## 8. Error Handling & Failure Recovery
 
-- **Per-stage retry** — any stage can be retried individually from the UI without re-running completed stages
-- **Crash recovery** — on startup, incomplete jobs detected via `job.json` status field and surfaced with a "Resume" button
+- **Resume from checkpoints** — completed stage outputs and stage statuses are persisted so resumed jobs continue from the last incomplete stage and still display earlier stages as completed
+- **Crash recovery** — on startup, incomplete jobs detected via `job.json` and surfaced with a "Resume" button
 - **LLM unavailable at post-processing time** — offer two options: wait and retry, or write transcript-only session note to vault (marked `post_processing: failed` in frontmatter)
-- **Vault write failure** — session note held in scratch space; "Write to vault" retry button shown. Scratch space not deleted until vault write succeeds.
-- **pyannote failure** — offer to continue with unlabelled transcript (speakers as `SPEAKER_00`, `SPEAKER_01`) so transcript is not lost
+- **Vault write confirmation** — successful post-processing does not write immediately; the user confirms before the vault stage runs
+- **Vault write failure** — session note content remains reproducible from scratch outputs; the vault stage can be retried without re-running earlier stages
+- **pyannote failure** — diarisation parsing is tolerant of current pyannote output variants; if diarisation still fails, the UI offers continuing with an unlabelled transcript (speakers as `SPEAKER_00`, `SPEAKER_01`) so transcript is not lost
 - **Partial vault writes** — session note and focus note written and retried independently
-- **Scratch space cleanup** — completed jobs moved to `~/.local/share/recalld/jobs/completed/` after successful vault write; retained for 30 days then deleted (configurable)
+- **Scratch space cleanup** — completed jobs remain in scratch space and can be cleaned up later according to retention policy
 
 ---
 

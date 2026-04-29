@@ -2,7 +2,7 @@
 
 ## Overview
 
-Modernise the frontend across layout, header/status bar, and controls. Scope: `style.css`, `base.html`, `index.html`, `settings.html`, `processing.html`. No new routes or backend changes required.
+Modernise the frontend across layout, header/status bar, and controls. Scope: `style.css`, `base.html`, `index.html`, `settings.html`, `processing.html`. The visual redesign itself does not require new backend behavior, though the current `processing.html` implementation now also depends on lightweight job-state hydration from the backend.
 
 ## 1. Colour Palette — Light Mode
 
@@ -44,7 +44,7 @@ Key content areas are wrapped in surface cards: `background: var(--surface)`, `b
 Cards applied to:
 - **index.html** — upload form (drop zone + category + submit); incomplete jobs section (when present)
 - **settings.html** — settings form
-- **processing.html** — stage list
+- **processing.html** — stage list plus recovery and confirmation controls
 
 No change to `max-width` (720px) or column structure.
 
@@ -75,4 +75,4 @@ No change to `max-width` (720px) or column structure.
 | `recalld/templates/base.html` | Header restructure, nav moved into header |
 | `recalld/templates/index.html` | Upload form and job list wrapped in cards |
 | `recalld/templates/settings.html` | Form wrapped in card |
-| `recalld/templates/processing.html` | Stage list wrapped in card |
+| `recalld/templates/processing.html` | Stage list wrapped in card, with room for recovery and confirmation controls |

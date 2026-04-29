@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
 from recalld.app import templates
 from recalld.events import bus
@@ -33,8 +33,19 @@ async def delete_job_route(job_id: str):
 
 @router.get("/{job_id}", response_class=HTMLResponse)
 async def job_detail(request: Request, job_id: str):
-    job = load_job(job_id)
+    job = load_job(job_id, scratch_root=DEFAULT_SCRATCH_ROOT)
     return templates.TemplateResponse(request, "processing.html", {"job": job})
+
+
+@router.get("/{job_id}/state", response_class=JSONResponse)
+async def job_state(job_id: str):
+    job = load_job(job_id, scratch_root=DEFAULT_SCRATCH_ROOT)
+    return JSONResponse({
+        "id": job.id,
+        "status": job.status.value,
+        "current_stage": job.current_stage.value,
+        "stage_statuses": job.stage_statuses,
+    })
 
 
 @router.get("/{job_id}/events")
@@ -52,8 +63,26 @@ async def resume_job(request: Request, job_id: str):
     from pathlib import Path
     from recalld.config import load_config
 
-    job = load_job(job_id)
+    job = load_job(job_id, scratch_root=DEFAULT_SCRATCH_ROOT)
     cfg = load_config()
+    job_dir = DEFAULT_SCRATCH_ROOT / job.id
+    source = job_dir / job.original_filename
+    asyncio.create_task(run_pipeline(job, source, cfg))
+    return templates.TemplateResponse(request, "processing.html", {"job": job})
+
+
+@router.post("/{job_id}/confirm-vault-write", response_class=HTMLResponse)
+async def confirm_vault_write(request: Request, job_id: str):
+    import asyncio
+    from recalld.config import load_config
+    from recalld.jobs import JobStatus, save_job
+
+    job = load_job(job_id, scratch_root=DEFAULT_SCRATCH_ROOT)
+    cfg = load_config()
+    job.status = JobStatus.running
+    job.stage_statuses["vault"] = "pending"
+    save_job(job, scratch_root=DEFAULT_SCRATCH_ROOT)
+
     job_dir = DEFAULT_SCRATCH_ROOT / job.id
     source = job_dir / job.original_filename
     asyncio.create_task(run_pipeline(job, source, cfg))
@@ -72,7 +101,7 @@ async def skip_diarise(request: Request, job_id: str):
     from recalld.jobs import JobStage, JobStatus, save_job
 
     cfg = load_config()
-    job = load_job(job_id)
+    job = load_job(job_id, scratch_root=DEFAULT_SCRATCH_ROOT)
     scratch = DEFAULT_SCRATCH_ROOT / job_id
 
     # Build a dummy diarisation: one turn covering everything
@@ -87,9 +116,10 @@ async def skip_diarise(request: Request, job_id: str):
     aligned_path = scratch / "aligned.json"
     aligned_path.write_text(json.dumps([t.__dict__ for t in labelled]))
     job.aligned_path = str(aligned_path)
+    job.stage_statuses["diarise"] = "failed"
+    job.stage_statuses["align"] = "done"
     job.current_stage = JobStage.postprocess
     job.status = JobStatus.running
-    from recalld.jobs import save_job
     save_job(job)
 
     source = scratch / job.original_filename
@@ -109,7 +139,7 @@ async def write_transcript_only(request: Request, job_id: str):
     from recalld.jobs import JobStatus, save_job
 
     cfg = load_config()
-    job = load_job(job_id)
+    job = load_job(job_id, scratch_root=DEFAULT_SCRATCH_ROOT)
     labelled = [LabelledTurn(**t) for t in json.loads(Path(job.aligned_path).read_text())]
     cat = next((c for c in cfg.categories if c.id == job.category_id), None)
 
@@ -126,6 +156,7 @@ async def write_transcript_only(request: Request, job_id: str):
         )
         await writer.write_note(cat.vault_path, filename, content)
         job.status = JobStatus.complete
+        job.stage_statuses["vault"] = "done"
         save_job(job)
         bus.publish(job.id, {"stage": "vault", "status": "done",
                              "obsidian_uri": f"obsidian://open?path={quote_path(cat.vault_path + '/' + filename)}",

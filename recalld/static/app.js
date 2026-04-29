@@ -36,26 +36,49 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 // SSE-based stage progress updates
-function connectSSE(jobId) {
+async function connectSSE(jobId, initialStages = {}) {
+  applyStageStatuses(initialStages);
+  await hydrateJobState(jobId);
   const evtSource = new EventSource(`/jobs/${jobId}/events`);
-  const stages = ["ingest", "transcribe", "diarise", "align", "postprocess", "vault"];
 
   evtSource.onmessage = (e) => {
     if (e.data === '"done"') { evtSource.close(); return; }
     const event = JSON.parse(e.data);
     const { stage, status, message, preview, topic_count, strategy,
-            obsidian_uri, summary, focus_points, can_skip, can_write_transcript_only } = event;
+            obsidian_uri, summary, focus_points, can_skip, can_write_transcript_only,
+            can_confirm_vault } = event;
 
     updateStage(stage, status, message);
 
     if (preview) showPreview(preview);
     if (topic_count) showChunkInfo(topic_count, strategy);
-    if (obsidian_uri) showResults(obsidian_uri, summary, focus_points);
+    if (summary || focus_points || obsidian_uri) showResults(obsidian_uri, summary, focus_points);
     if (can_skip) showDiariseSkip(stage);
     if (can_write_transcript_only) showPostprocessFallback(stage);
+    if (can_confirm_vault) showVaultConfirm(stage);
 
     appendLog(`[${stage}] ${status}${message ? ': ' + message : ''}`);
   };
+}
+
+async function hydrateJobState(jobId) {
+  try {
+    const resp = await fetch(`/jobs/${jobId}/state`, {
+      headers: { "Accept": "application/json" },
+    });
+    if (!resp.ok) return;
+    const state = await resp.json();
+    applyStageStatuses(state.stage_statuses || {});
+  } catch (_) {
+    // Fall back to template-provided state if the refresh request fails.
+  }
+}
+
+function applyStageStatuses(stageStatuses) {
+  Object.entries(stageStatuses).forEach(([stage, status]) => {
+    if (status && status !== "pending") updateStage(stage, status, "");
+  });
+  if (stageStatuses.vault === "awaiting_confirmation") showVaultConfirm("vault");
 }
 
 function updateStage(stage, status, message) {
@@ -66,6 +89,7 @@ function updateStage(stage, status, message) {
   if (status === "running") icon.innerHTML = '<span class="spinner"></span>';
   if (status === "done") icon.textContent = "✓";
   if (status === "failed") icon.textContent = "✗";
+  if (status === "awaiting_confirmation") icon.textContent = "!";
   if (msg && message) msg.textContent = message;
 }
 
@@ -92,7 +116,15 @@ function showResults(uri, summary, focusPoints) {
   const linkEl = document.getElementById("obsidian-link");
   if (summaryEl) summaryEl.textContent = summary;
   if (focusEl) focusEl.innerHTML = focusPoints.map(p => `<li>${p}</li>`).join("");
-  if (linkEl) linkEl.href = uri;
+  if (linkEl) {
+    if (uri) {
+      linkEl.href = uri;
+      linkEl.style.display = "inline-block";
+    } else {
+      linkEl.removeAttribute("href");
+      linkEl.style.display = "none";
+    }
+  }
   resultsEl.style.display = "block";
 }
 
@@ -103,6 +135,11 @@ function showDiariseSkip(stage) {
 
 function showPostprocessFallback(stage) {
   const el = document.getElementById("postprocess-fallback-btn");
+  if (el) el.style.display = "inline-block";
+}
+
+function showVaultConfirm(stage) {
+  const el = document.getElementById("vault-confirm-btn");
   if (el) el.style.display = "inline-block";
 }
 
