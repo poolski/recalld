@@ -10,6 +10,37 @@ FAKE_MODELS_RESPONSE = {
     ]
 }
 
+FAKE_LMSTUDIO_MODELS_RESPONSE = {
+    "models": [
+        {
+            "type": "llm",
+            "key": "gemma-3-270m-it-qat",
+            "display_name": "Gemma 3 270m Instruct Qat",
+            "loaded_instances": [
+                {
+                    "id": "gemma-3-270m-it-qat",
+                    "config": {"context_length": 4096},
+                }
+            ],
+            "max_context_length": 32768,
+        },
+        {
+            "type": "llm",
+            "key": "qwen/qwen3-4b",
+            "display_name": "Qwen 3 4B",
+            "loaded_instances": [],
+            "max_context_length": 65536,
+        },
+        {
+            "type": "embedding",
+            "key": "text-embedding-nomic-embed-text-v1.5-embedding",
+            "display_name": "Nomic Embed Text v1.5",
+            "loaded_instances": [],
+            "max_context_length": 2048,
+        },
+    ]
+}
+
 
 @respx.mock
 async def test_detect_context_length_success():
@@ -62,6 +93,31 @@ async def test_list_available_models_returns_provider_metadata():
         ProviderModel(id="qwen/qwen3-4b", context_length=32768, selected=False),
         ProviderModel(id="qwen/qwen3-8b", context_length=65536, selected=True),
     ]
+
+
+@respx.mock
+async def test_list_available_models_supports_lmstudio_models_payload():
+    respx.get("http://localhost:1234/v1/models").mock(
+        return_value=httpx.Response(200, json=FAKE_LMSTUDIO_MODELS_RESPONSE)
+    )
+
+    models = await list_available_models("http://localhost:1234/api/v1", selected_model="gemma-3-270m-it-qat")
+
+    assert models == [
+        ProviderModel(id="gemma-3-270m-it-qat", context_length=4096, selected=True),
+        ProviderModel(id="qwen/qwen3-4b", context_length=65536, selected=False),
+    ]
+
+
+@respx.mock
+async def test_detect_context_length_prefers_loaded_instance_context_for_lmstudio():
+    respx.get("http://localhost:1234/v1/models").mock(
+        return_value=httpx.Response(200, json=FAKE_LMSTUDIO_MODELS_RESPONSE)
+    )
+
+    length = await detect_context_length("http://localhost:1234/api/v1", "gemma-3-270m-it-qat")
+
+    assert length == 4096
 
 
 def test_token_budget():
