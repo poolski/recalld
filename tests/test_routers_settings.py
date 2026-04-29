@@ -56,3 +56,28 @@ def test_save_settings_persists_selected_provider_model(monkeypatch):
     assert cfg.llm_context_headroom == 0.75
     assert "Settings saved." in resp.text
     assert "qwen/qwen3-8b" in resp.text
+
+
+def test_settings_page_shows_notice_when_provider_unavailable_but_model_selected(monkeypatch):
+    async def fake_list_models(base_url: str, selected_model: str):
+        return []
+
+    monkeypatch.setattr("recalld.routers.settings.list_available_models", fake_list_models)
+
+    client = TestClient(create_app())
+    client.post("/settings/", data={
+        "obsidian_api_url": "https://127.0.0.1:27124",
+        "obsidian_api_key": "",
+        "llm_base_url": "http://localhost:1234/api/v1",
+        "llm_model": "qwen/qwen3-4b",
+        "llm_context_headroom": "0.8",
+        "log_level": "info",
+        "whisper_model": "small",
+        "huggingface_token": "",
+        "scratch_retention_days": "30",
+    })
+
+    resp = client.get("/settings/")
+
+    assert resp.status_code == 200
+    assert "Could not refresh models from LM Studio" in resp.text

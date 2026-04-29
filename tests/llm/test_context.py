@@ -97,7 +97,7 @@ async def test_list_available_models_returns_provider_metadata():
 
 @respx.mock
 async def test_list_available_models_supports_lmstudio_models_payload():
-    respx.get("http://localhost:1234/v1/models").mock(
+    respx.get("http://localhost:1234/api/v1/models").mock(
         return_value=httpx.Response(200, json=FAKE_LMSTUDIO_MODELS_RESPONSE)
     )
 
@@ -111,7 +111,7 @@ async def test_list_available_models_supports_lmstudio_models_payload():
 
 @respx.mock
 async def test_detect_context_length_prefers_loaded_instance_context_for_lmstudio():
-    respx.get("http://localhost:1234/v1/models").mock(
+    respx.get("http://localhost:1234/api/v1/models").mock(
         return_value=httpx.Response(200, json=FAKE_LMSTUDIO_MODELS_RESPONSE)
     )
 

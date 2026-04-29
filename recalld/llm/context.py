@@ -15,13 +15,15 @@ class ProviderModel:
     selected: bool = False
 
 
-def _models_url(base_url: str) -> str:
+def _models_urls(base_url: str) -> list[str]:
     base = base_url.rstrip("/")
     if base.endswith("/api/v1"):
-        return f"{base[:-7]}/v1/models"
+        root = base[:-7]
+        return [f"{root}/api/v1/models", f"{root}/v1/models"]
     if base.endswith("/v1"):
-        return f"{base}/models"
-    return f"{base}/v1/models"
+        root = base[:-3]
+        return [f"{root}/api/v1/models", f"{base}/models"]
+    return [f"{base}/api/v1/models", f"{base}/v1/models"]
 
 
 def _as_int(value) -> int | None:
@@ -78,12 +80,17 @@ def _normalize_model_entries(data: dict) -> list[ProviderModel]:
 
 async def list_available_models(base_url: str, selected_model: str) -> list[ProviderModel]:
     """Query the provider model list and normalize it for settings and chunking decisions."""
-    try:
-        async with httpx.AsyncClient(verify=False, timeout=5.0) as client:
-            resp = await client.get(_models_url(base_url))
-            resp.raise_for_status()
-            data = resp.json()
-    except Exception:
+    data = None
+    async with httpx.AsyncClient(verify=False, timeout=5.0) as client:
+        for url in _models_urls(base_url):
+            try:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                data = resp.json()
+                break
+            except Exception:
+                continue
+    if data is None:
         return []
 
     return [
