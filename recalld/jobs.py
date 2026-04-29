@@ -92,6 +92,7 @@ class Job(BaseModel):
     # LLM chunking info for UI display
     topic_count: Optional[int] = None
     chunk_strategy: Optional[str] = None
+    filename: Optional[str] = None
 
     @model_validator(mode="before")
     @classmethod

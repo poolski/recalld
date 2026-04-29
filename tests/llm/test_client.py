@@ -25,6 +25,7 @@ async def test_llm_client_uses_lmstudio_chat_endpoint_and_payload():
         "model": "qwen/qwen3-4b",
         "system_prompt": "You answer only in rhymes.",
         "input": "What is your favorite color?",
+        "stream": False,
     }
     assert "## Summary" in result
 
@@ -64,3 +65,60 @@ async def test_llm_client_extracts_message_content_from_structured_output():
 
     assert route.called
     assert result == "## Summary\n\nHello\n\n## Focus\n\n- [ ] Test"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_llm_client_stream_yields_partial_tokens():
+    sse_content = (
+        'event: chat.start\n'
+        'data: {"type":"chat.start","model_instance_id":"m"}\n\n'
+        'event: message.delta\n'
+        'data: {"type":"message.delta","content":"Part 1 "}\n\n'
+        'event: message.delta\n'
+        'data: {"type":"message.delta","content":"Part 2"}\n\n'
+        'event: chat.end\n'
+        'data: {"type":"chat.end","result":{"model_instance_id":"m","output":[{"type":"message","content":"Part 1 Part 2"}]}}\n\n'
+        'data: [DONE]\n\n'
+    ).encode()
+    route = respx.post("http://localhost:1234/api/v1/chat").mock(
+        return_value=httpx.Response(200, content=sse_content)
+    )
+
+    client = LLMClient(base_url="http://localhost:1234", model="m")
+    tokens = []
+    async for t in client.stream("sys", "user"):
+        tokens.append(t)
+
+    assert route.called
+    request = route.calls[0].request
+    assert request.content
+    assert json.loads(request.content.decode()) == {
+        "model": "m",
+        "system_prompt": "sys",
+        "input": "user",
+        "stream": True,
+    }
+    assert tokens == ["Part 1 ", "Part 2"]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_llm_client_stream_falls_back_to_chat_end_when_no_deltas():
+    sse_content = (
+        'event: chat.start\n'
+        'data: {"type":"chat.start","model_instance_id":"m"}\n\n'
+        'event: chat.end\n'
+        'data: {"type":"chat.end","result":{"model_instance_id":"m","output":[{"type":"message","content":"Done"}]}}\n\n'
+        'data: [DONE]\n\n'
+    ).encode()
+    respx.post("http://localhost:1234/api/v1/chat").mock(
+        return_value=httpx.Response(200, content=sse_content)
+    )
+
+    client = LLMClient(base_url="http://localhost:1234", model="m")
+    tokens = []
+    async for t in client.stream("sys", "user"):
+        tokens.append(t)
+
+    assert tokens == ["Done"]
