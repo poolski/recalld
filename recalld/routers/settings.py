@@ -8,19 +8,29 @@ from fastapi.responses import HTMLResponse
 
 from recalld.app import templates
 from recalld.config import DEFAULT_CONFIG_PATH, load_config, save_config
-from recalld.llm.context import detect_context_length
+from recalld.llm.context import detect_context_length, list_available_models
 
 router = APIRouter(prefix="/settings")
+
+
+async def _settings_context(request: Request, cfg, *, saved: bool = False) -> dict:
+    provider_models = await list_available_models(cfg.llm_base_url, cfg.llm_model)
+    current_model = next((model for model in provider_models if model.selected), None)
+    detected_context_length = current_model.context_length if current_model and current_model.context_length else await detect_context_length(cfg.llm_base_url, cfg.llm_model)
+    return {
+        "request": request,
+        "cfg": cfg,
+        "provider_models": provider_models,
+        "current_model": current_model,
+        "detected_context_length": detected_context_length,
+        "saved": saved,
+    }
 
 
 @router.get("/", response_class=HTMLResponse)
 async def settings_page(request: Request):
     cfg = load_config()
-    ctx_len = await detect_context_length(cfg.llm_base_url, cfg.llm_model)
-    return templates.TemplateResponse(request, "settings.html", {
-        "cfg": cfg,
-        "detected_context_length": ctx_len,
-    })
+    return templates.TemplateResponse(request, "settings.html", await _settings_context(request, cfg))
 
 
 @router.post("/", response_class=HTMLResponse)
@@ -47,12 +57,7 @@ async def save_settings(
     cfg.huggingface_token = huggingface_token
     cfg.scratch_retention_days = scratch_retention_days
     save_config(cfg)
-    ctx_len = await detect_context_length(cfg.llm_base_url, cfg.llm_model)
-    return templates.TemplateResponse(request, "settings.html", {
-        "cfg": cfg,
-        "detected_context_length": ctx_len,
-        "saved": True,
-    })
+    return templates.TemplateResponse(request, "settings.html", await _settings_context(request, cfg, saved=True))
 
 
 @router.get("/status", response_class=HTMLResponse)

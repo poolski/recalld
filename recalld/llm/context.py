@@ -1,32 +1,62 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 
 import httpx
 
 FALLBACK_CONTEXT_LENGTH = 6000
 
 
-async def detect_context_length(base_url: str, model: str) -> int:
-    """Query /v1/models to get the context length for the loaded model. Falls back to 6000 on any error."""
+@dataclass(eq=True, frozen=True)
+class ProviderModel:
+    id: str
+    context_length: int | None
+    selected: bool = False
+
+
+def _models_url(base_url: str) -> str:
+    base = base_url.rstrip("/")
+    if base.endswith("/api/v1"):
+        return f"{base[:-7]}/v1/models"
+    if base.endswith("/v1"):
+        return f"{base}/models"
+    return f"{base}/v1/models"
+
+
+async def list_available_models(base_url: str, selected_model: str) -> list[ProviderModel]:
+    """Query the provider model list and normalize it for settings and chunking decisions."""
     try:
         async with httpx.AsyncClient(verify=False, timeout=5.0) as client:
-            resp = await client.get(f"{base_url}/models")
+            resp = await client.get(_models_url(base_url))
             resp.raise_for_status()
             data = resp.json()
-            for entry in data.get("data", []):
-                if entry.get("id") == model:
-                    length = entry.get("context_length") or entry.get("max_context_length")
-                    if length:
-                        return int(length)
-            # If model not found by name, use first entry
-            entries = data.get("data", [])
-            if entries:
-                length = entries[0].get("context_length") or entries[0].get("max_context_length")
-                if length:
-                    return int(length)
     except Exception:
-        pass
+        return []
+
+    models: list[ProviderModel] = []
+    for entry in data.get("data", []):
+        model_id = entry.get("id")
+        if not model_id:
+            continue
+        length = entry.get("context_length") or entry.get("max_context_length")
+        models.append(ProviderModel(
+            id=str(model_id),
+            context_length=int(length) if length else None,
+            selected=str(model_id) == selected_model,
+        ))
+    return models
+
+
+async def detect_context_length(base_url: str, model: str) -> int:
+    """Query provider models for context length. Falls back to 6000 on any error."""
+    models = await list_available_models(base_url, selected_model=model)
+    for entry in models:
+        if entry.selected and entry.context_length:
+            return entry.context_length
+    for entry in models:
+        if entry.context_length:
+            return entry.context_length
     return FALLBACK_CONTEXT_LENGTH
 
 
