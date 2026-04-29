@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
@@ -70,6 +71,10 @@ def save_job(job: Job, scratch_root: Path = DEFAULT_SCRATCH_ROOT) -> None:
 def load_job(job_id: str, scratch_root: Path = DEFAULT_SCRATCH_ROOT) -> Job:
     path = _job_dir(job_id, scratch_root) / "job.json"
     return Job.model_validate_json(path.read_text())
+
+
+def delete_job(job_id: str, scratch_root: Path = DEFAULT_SCRATCH_ROOT) -> None:
+    shutil.rmtree(_job_dir(job_id, scratch_root), ignore_errors=True)
 
 
 def list_incomplete_jobs(scratch_root: Path = DEFAULT_SCRATCH_ROOT) -> list[Job]:

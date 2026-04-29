@@ -6,6 +6,7 @@
 <div class="alert success">Settings saved.</div>
 {% endif %}
 
+<div class="card">
 <form action="/settings/" method="post">
   <h2>Obsidian</h2>
   <div class="field">
@@ -67,6 +68,7 @@
 
   <button type="submit">Save settings</button>
 </form>
+</div>
 
 <h2>Categories</h2>
 {% for cat in cfg.categories %}
