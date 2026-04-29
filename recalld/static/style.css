@@ -248,7 +248,6 @@ button:active, .btn:active { transform: scale(0.98); }
   margin-top: 12px;
   font-size: 13px;
   line-height: 1.8;
-  white-space: pre-wrap;
 }
 .stage-meta {
   color: var(--muted);
@@ -261,6 +260,14 @@ button:active, .btn:active { transform: scale(0.98); }
 .stage-results h3 {
   margin: 16px 0 8px;
   font-size: 14px;
+}
+.stage-rich-text p,
+.stage-results p {
+  margin-bottom: 12px;
+}
+.stage-rich-text p:last-child,
+.stage-results p:last-child {
+  margin-bottom: 0;
 }
 .stage-results ul {
   padding-left: 20px;
