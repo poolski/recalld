@@ -109,3 +109,49 @@ async def test_pipeline_waits_for_speaker_confirmation_after_align(tmp_path, mon
     assert reloaded.status == JobStatus.pending
     assert reloaded.stage_statuses["align"] == "awaiting_confirmation"
     assert reloaded.aligned_path is not None
+
+
+@pytest.mark.asyncio
+async def test_pipeline_maps_diariser_speakers_in_encounter_order(tmp_path, monkeypatch):
+    monkeypatch.setattr("recalld.pipeline.runner.DEFAULT_SCRATCH_ROOT", tmp_path)
+
+    job = create_job(category_id="cat-1", original_filename="session.m4a", scratch_root=tmp_path)
+    scratch = tmp_path / job.id
+    transcript_path = scratch / "transcript.json"
+    diarisation_path = scratch / "diarisation.json"
+
+    words = [
+        WordSegment(start=0.0, end=0.5, word="Hello"),
+        WordSegment(start=0.5, end=1.0, word="there"),
+        WordSegment(start=1.0, end=1.5, word="Hi"),
+        WordSegment(start=1.5, end=2.0, word="back"),
+    ]
+    turns = [
+        SpeakerTurn(start=0.0, end=1.0, speaker="SPEAKER_01"),
+        SpeakerTurn(start=1.0, end=2.0, speaker="SPEAKER_02"),
+    ]
+    transcript_path.write_text(json.dumps([w.__dict__ for w in words]))
+    diarisation_path.write_text(json.dumps([t.__dict__ for t in turns]))
+
+    job.transcript_path = str(transcript_path)
+    job.diarisation_path = str(diarisation_path)
+    job.current_stage = JobStage.align
+    save_job(job, scratch_root=tmp_path)
+
+    cfg = Config(
+        llm_model="test-model",
+        categories=[Category(
+            id="cat-1",
+            name="Coaching",
+            vault_path="Life/Sessions",
+            speaker_a="You",
+            speaker_b="Coach",
+        )],
+    )
+
+    with patch("recalld.pipeline.runner.postprocess", AsyncMock()):
+        await run_pipeline(job, scratch / "session.m4a", cfg)
+
+    aligned = json.loads((scratch / "aligned.json").read_text())
+    assert aligned[0]["speaker"] == "You"
+    assert aligned[1]["speaker"] == "Coach"

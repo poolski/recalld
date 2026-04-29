@@ -24,7 +24,7 @@ A productive session exploring focus strategies.
 """
 
 
-async def _fake_stream(system, user):
+async def _fake_stream(system, user, event_cb=None):
     yield "## Summary\n\n"
     yield "A productive session exploring focus strategies.\n\n"
     yield "## Focus\n\n"
@@ -60,7 +60,7 @@ async def test_postprocess_map_reduce_calls_llm_multiple_times():
         call_count += 1
         return FAKE_LLM_RESPONSE
 
-    async def fake_stream(system, user):
+    async def fake_stream(system, user, event_cb=None):
         nonlocal call_count
         call_count += 1
         async for t in _fake_stream(system, user):
@@ -85,7 +85,7 @@ async def test_postprocess_uses_single_request_when_transcript_fits_provider_bud
     turns = _turns([("You", "word " * 120), ("Coach", "word " * 120)])
     call_count = 0
 
-    async def fake_stream(system, user):
+    async def fake_stream(system, user, event_cb=None):
         nonlocal call_count
         call_count += 1
         async for t in _fake_stream(system, user):
@@ -110,7 +110,7 @@ async def test_postprocess_includes_configured_speaker_names_in_system_prompt():
     turns = _turns([("Alex", "I struggled with focus this week"), ("Jordan", "What pattern did you notice?")])
     captured = {}
 
-    async def fake_stream(system, user):
+    async def fake_stream(system, user, event_cb=None):
         captured["system"] = system
         async for t in _fake_stream(system, user):
             yield t
@@ -130,6 +130,7 @@ async def test_postprocess_includes_configured_speaker_names_in_system_prompt():
     assert "Alex" in captured["system"]
     assert "Jordan" in captured["system"]
     assert "Refer to Alex as \"you\"" in captured["system"]
+    assert "blank line between each paragraph" in captured["system"]
 
 
 @pytest.mark.asyncio
@@ -137,7 +138,7 @@ async def test_postprocess_calls_stream_cb_with_partial_summary():
     turns = _turns([("You", "hi"), ("Coach", "hello")])
     updates = []
 
-    async def fake_stream(system, user):
+    async def fake_stream(system, user, event_cb=None):
         yield "## Summary\n\nPart 1"
         yield " Part 2"
 
@@ -154,6 +155,41 @@ async def test_postprocess_calls_stream_cb_with_partial_summary():
 
     assert "Part 1" in updates[0]
     assert "Part 1 Part 2" in updates[1]
+
+
+@pytest.mark.asyncio
+async def test_postprocess_forwards_lmstudio_stream_events():
+    turns = _turns([("You", "hi"), ("Coach", "hello")])
+    captured = []
+
+    async def fake_stream(system, user, event_cb=None):
+        if event_cb:
+            event_cb("prompt_processing.start", {"type": "prompt_processing.start"})
+            event_cb("reasoning.delta", {"type": "reasoning.delta", "content": "Thinking"})
+            event_cb("message.delta", {"type": "message.delta", "content": "## Summary\n\nDone"})
+            event_cb(
+                "chat.end",
+                {"type": "chat.end", "result": {"output": [{"type": "message", "content": "## Summary\n\nDone"}]}},
+            )
+        yield "## Summary\n\nDone"
+
+    with patch("recalld.pipeline.postprocess.LLMClient") as MockClient:
+        instance = MockClient.return_value
+        instance.stream = fake_stream
+        await postprocess(
+            turns=turns,
+            llm_base_url="http://localhost:1234/v1",
+            llm_model="qwen",
+            token_budget=1000,
+            event_cb=lambda event_type, data: captured.append(event_type),
+        )
+
+    assert captured == [
+        "prompt_processing.start",
+        "reasoning.delta",
+        "message.delta",
+        "chat.end",
+    ]
 
 
 def test_parse_focus_points_from_markdown():

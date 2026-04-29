@@ -111,7 +111,10 @@ class VaultWriter:
         self.api_key = api_key
 
     def _headers(self) -> dict[str, str]:
-        return {"Authorization": f"Bearer {self.api_key}"}
+        headers: dict[str, str] = {}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
 
     async def write_note(self, vault_path: str, filename: str, content: str) -> None:
         encoded = quote(f"{vault_path}/{filename}", safe="/")
@@ -141,3 +144,11 @@ class VaultWriter:
         async with httpx.AsyncClient(verify=False, timeout=5.0) as client:
             resp = await client.get(url, headers=self._headers())
             return resp.status_code == 200
+
+    async def open_note(self, vault_path: str) -> None:
+        encoded = quote(vault_path, safe="/")
+        url = f"{self.api_url}/open/{encoded}"
+        async with httpx.AsyncClient(verify=False, timeout=5.0) as client:
+            resp = await client.post(url, headers=self._headers())
+            if resp.status_code >= 400:
+                raise VaultWriteError(f"Obsidian API error {resp.status_code}: {resp.text}")

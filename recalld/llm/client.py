@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Callable, Optional
+
 import httpx
 
 
@@ -58,7 +60,12 @@ class LLMClient:
             data = resp.json()
             return self._parse_output(data)
 
-    async def stream(self, system: str, user: str):
+    async def stream(
+        self,
+        system: str,
+        user: str,
+        event_cb: Optional[Callable[[str, dict], None]] = None,
+    ):
         """Send a streaming LM Studio chat request. Yields partial content tokens."""
         import json
         payload = {
@@ -81,6 +88,8 @@ class LLMClient:
                             if data_str != "[DONE]":
                                 try:
                                     data = json.loads(data_str)
+                                    if event_cb:
+                                        event_cb(event_type, data)
                                     if event_type == "message.delta":
                                         token = data.get("content")
                                         if token:

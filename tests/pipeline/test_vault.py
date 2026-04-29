@@ -109,3 +109,33 @@ async def test_vault_writer_creates_note():
         filename="2025-04-28 ADHD Coaching.md",
         content="# Note",
     )
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_vault_writer_opens_note_via_rest_api():
+    route = respx.post("https://127.0.0.1:27124/open/Life/Sessions/2025-04-28%20ADHD%20Coaching.md").mock(
+        return_value=httpx.Response(200)
+    )
+    writer = VaultWriter(api_url="https://127.0.0.1:27124", api_key="token")
+    await writer.open_note("Life/Sessions/2025-04-28 ADHD Coaching.md")
+
+    assert route.called
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_vault_writer_omits_auth_header_when_api_key_blank():
+    route = respx.post("https://127.0.0.1:27124/vault/Life/Sessions/2025-04-28%20ADHD%20Coaching.md").mock(
+        return_value=httpx.Response(200)
+    )
+    writer = VaultWriter(api_url="https://127.0.0.1:27124", api_key="")
+    await writer.write_note(
+        vault_path="Life/Sessions",
+        filename="2025-04-28 ADHD Coaching.md",
+        content="# Note",
+    )
+
+    assert route.called
+    request = route.calls[0].request
+    assert "authorization" not in request.headers

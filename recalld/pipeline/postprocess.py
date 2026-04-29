@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 from typing import Callable, Optional
 
+from recalld.llm.context import estimate_tokens
 from recalld.llm.chunking import chunk_transcript, ChunkStrategy
 from recalld.llm.client import LLMClient
 from recalld.pipeline.align import LabelledTurn
@@ -17,6 +18,7 @@ You are a session notes assistant. Given a transcript, produce:
    - Paragraphs should be at most 3 sentences long.
    - Avoid long, dense blocks of text.
    - Separate distinct themes into their own paragraphs.
+   - Put a blank line between each paragraph.
    - Do not use any other headings or formatting.
 2. A short list of focus points or action items under "## Focus" using markdown checkboxes (- [ ] item)
 Write clearly and concisely. Do not add extra headings or commentary."""
@@ -34,6 +36,7 @@ Produce:
    - Refer to {speaker_a_name} as "you" and {speaker_b_name} by name.
    - Use 3-5 concise paragraphs to keep the text readable.
    - Separate distinct themes into their own paragraphs.
+   - Put a blank line between each paragraph.
    - Do not use any other headings or formatting.
 2. A focused list of action items under "## Focus" using markdown checkboxes (- [ ] item)"""
 
@@ -79,6 +82,13 @@ def _reduce_system_prompt(speaker_a_name: str, speaker_b_name: str) -> str:
     return REDUCE_SYSTEM_PROMPT_TEMPLATE.format(speaker_a_name=speaker_a_name, speaker_b_name=speaker_b_name)
 
 
+def _effective_transcript_budget(token_budget: int, *prompts: str) -> int:
+    """Reserve room for prompts and generation so chunking is conservative."""
+    prompt_tokens = max((estimate_tokens(prompt) for prompt in prompts), default=0)
+    safety_reserve = 512
+    return max(1, token_budget - prompt_tokens - safety_reserve)
+
+
 async def postprocess(
     turns: list[LabelledTurn],
     llm_base_url: str,
@@ -86,18 +96,20 @@ async def postprocess(
     token_budget: int,
     progress_cb: Optional[Callable[[str], None]] = None,
     stream_cb: Optional[Callable[[str], None]] = None,
+    event_cb: Optional[Callable[[str, dict], None]] = None,
     speaker_a_name: str = "You",
     speaker_b_name: str = "Coach",
 ) -> PostProcessResult:
     client = LLMClient(base_url=llm_base_url, model=llm_model)
-    strategy = chunk_transcript(turns, token_budget=token_budget)
     single_prompt = _single_system_prompt(speaker_a_name, speaker_b_name)
     reduce_prompt = _reduce_system_prompt(speaker_a_name, speaker_b_name)
+    effective_budget = _effective_transcript_budget(token_budget, single_prompt, reduce_prompt)
+    strategy = chunk_transcript(turns, token_budget=effective_budget)
 
     if strategy.strategy == "single":
         transcript_text = _turns_to_text(turns)
         raw = ""
-        async for token in client.stream(single_prompt, transcript_text):
+        async for token in client.stream(single_prompt, transcript_text, event_cb=event_cb):
             raw += token
             if stream_cb:
                 stream_cb(parse_summary(raw))
@@ -127,7 +139,7 @@ async def postprocess(
     # Reduce phase
     combined = "\n\n---\n\n".join(partial_summaries)
     raw = ""
-    async for token in client.stream(reduce_prompt, combined):
+    async for token in client.stream(reduce_prompt, combined, event_cb=event_cb):
         raw += token
         if stream_cb:
             stream_cb(parse_summary(raw))

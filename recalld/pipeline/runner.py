@@ -20,12 +20,68 @@ def _emit(job: Job, stage: str, status: str, message: str = "", **extra) -> None
     bus.publish(job.id, {"stage": stage, "status": status, "message": message, **extra})
 
 
+def _emit_lmstudio_event(job: Job, event_type: str, data: dict) -> None:
+    message = ""
+    extra = {"lmstudio_event": event_type}
+
+    if event_type == "prompt_processing.start":
+        message = "LM Studio is processing the prompt."
+    elif event_type == "prompt_processing.progress":
+        progress = data.get("progress")
+        if isinstance(progress, (int, float)):
+            message = f"LM Studio prompt processing: {round(progress * 100)}%"
+            extra["lmstudio_progress"] = progress
+        else:
+            message = "LM Studio prompt processing in progress."
+    elif event_type == "prompt_processing.end":
+        message = "LM Studio finished processing the prompt."
+    elif event_type == "reasoning.start":
+        message = "LM Studio started reasoning."
+    elif event_type == "reasoning.end":
+        message = "LM Studio finished reasoning."
+    elif event_type == "message.start":
+        message = "LM Studio started streaming the response."
+    elif event_type == "message.end":
+        message = "LM Studio finished streaming the response."
+    elif event_type == "chat.start":
+        message = "LM Studio chat started."
+    elif event_type == "chat.end":
+        message = "LM Studio chat completed."
+    elif event_type == "error":
+        error = data.get("error")
+        if isinstance(error, dict):
+            message = error.get("message", "")
+            if error.get("type"):
+                extra["lmstudio_error_type"] = error["type"]
+        else:
+            message = "LM Studio reported an error."
+
+    if message:
+        _emit(job, "postprocess", "running", message, **extra)
+
+
 def _set_stage_status(job: Job, stage: str, status: str) -> None:
     job.stage_statuses[stage] = status
 
 
 def _save(job: Job) -> None:
     save_job(job, scratch_root=DEFAULT_SCRATCH_ROOT)
+
+
+def _build_speaker_map(raw_turns, speaker_a: str, speaker_b: str) -> dict[str, str]:
+    speakers: list[str] = []
+    for turn in raw_turns:
+        if turn.speaker not in speakers:
+            speakers.append(turn.speaker)
+        if len(speakers) == 2:
+            break
+
+    speaker_map: dict[str, str] = {}
+    if speakers:
+        speaker_map[speakers[0]] = speaker_a
+    if len(speakers) > 1:
+        speaker_map[speakers[1]] = speaker_b
+    return speaker_map
 
 
 async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
@@ -114,7 +170,7 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
             cat = next((c for c in cfg.categories if c.id == job.category_id), None)
             speaker_map = None
             if cat:
-                speaker_map = {"SPEAKER_00": cat.speaker_a, "SPEAKER_01": cat.speaker_b}
+                speaker_map = _build_speaker_map(raw_turns, cat.speaker_a, cat.speaker_b)
                 job.speaker_00 = cat.speaker_a
                 job.speaker_01 = cat.speaker_b
 
@@ -162,6 +218,7 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
                     token_budget=budget,
                     progress_cb=lambda msg: _emit(job, "postprocess", "running", msg),
                     stream_cb=lambda text: _emit(job, "postprocess", "running", summary=text),
+                    event_cb=lambda event_type, data: _emit_lmstudio_event(job, event_type, data),
                     speaker_a_name=speaker_a_name,
                     speaker_b_name=speaker_b_name,
                 )
@@ -288,7 +345,7 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
             _set_stage_status(job, "vault", "done")
             _save(job)
             _emit(job, "vault", "done",
-                  obsidian_uri=f"obsidian://open?path={quote_path(cat.vault_path + '/' + filename)}",
+                  obsidian_uri=f"/jobs/{job.id}/open-in-obsidian",
                   summary=result.summary if result else "",
                   focus_points=result.focus_points if result else [])
 
@@ -298,8 +355,3 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
         _set_stage_status(job, job.current_stage.value, "failed")
         _save(job)
         _emit(job, job.current_stage.value, "failed", str(e))
-
-
-def quote_path(path: str) -> str:
-    from urllib.parse import quote
-    return quote(path)
