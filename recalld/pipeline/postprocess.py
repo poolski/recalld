@@ -12,7 +12,7 @@ from recalld.pipeline.align import LabelledTurn
 SYSTEM_PROMPT_TEMPLATE = """\
 You are a session notes assistant. Given a transcript, produce:
 1. A 2-3 paragraph summary under the heading "## Summary". Refer to {speaker_a_name} as "you" in the summary.
-   Refer to {speaker_b_name} by name.
+   Refer to {speaker_b_name} by name. Use line breaks to separate themes, but do not use any other headings or formatting.
 2. A short list of focus points or action items under "## Focus" using markdown checkboxes (- [ ] item)
 Write clearly and concisely. Do not add extra headings or commentary."""
 
@@ -25,7 +25,7 @@ REDUCE_SYSTEM_PROMPT_TEMPLATE = """\
 You are combining partial summaries of a coaching session transcript into final notes.
 Produce:
 1. A 2-3 paragraph summary under "## Summary". Refer to {speaker_a_name} as "you" in the summary.
-   Refer to {speaker_b_name} by name.
+   Refer to {speaker_b_name} by name. Use line breaks to separate themes, but do not use any other headings or formatting.
 2. A focused list of action items under "## Focus" using markdown checkboxes (- [ ] item)"""
 
 
