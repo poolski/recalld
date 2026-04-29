@@ -1,6 +1,6 @@
 import pytest
 from pathlib import Path
-from recalld.jobs import Job, JobStage, JobStatus, create_job, load_job, save_job, list_incomplete_jobs
+from recalld.jobs import Job, JobStage, JobStatus, create_job, load_job, save_job, list_incomplete_jobs, delete_job
 
 
 def test_create_job(tmp_path):
@@ -44,3 +44,10 @@ def test_save_job_creates_dir_if_missing(tmp_path):
     new_root = tmp_path / "newroot"
     save_job(job, scratch_root=new_root)
     assert (new_root / job.id / "job.json").exists()
+
+
+def test_delete_job(tmp_path):
+    job = create_job(category_id="test", original_filename="x.m4a", scratch_root=tmp_path)
+    assert (tmp_path / job.id).exists()
+    delete_job(job.id, scratch_root=tmp_path)
+    assert not (tmp_path / job.id).exists()
