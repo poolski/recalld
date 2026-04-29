@@ -54,7 +54,7 @@ Configured in the UI, stored in config. Each category has:
 - **Name** — e.g. "ADHD Coaching", "Work Meeting"
 - **Vault path** — where session notes are created, e.g. `Life/Mental Health/ADHD Coaching/Sessions`
 - **Focus note path** — optional; path to a running focus/action note, e.g. `Life/Mental Health/ADHD Coaching/Coaching Focus.md`
-- **Speaker names** — two names, persisted per category; prompted in the UI on first use for that category
+- **Speaker names** — two names, persisted per category; prompted in the UI on first use for that category. **v1 constraint: two speakers only.** Multi-speaker support (e.g. work meetings) is out of scope for this version.
 
 Selected at upload time via a dropdown. Defaults to last used category (`last_used_category` in config, updated on each job submission). New categories can be added from the upload screen or the settings page.
 
@@ -74,15 +74,18 @@ speakers: [You, Coach]
 ---
 
 ## Summary
+
 <2-3 paragraph summary of the session>
 
 [Full transcript ↓](#transcript)
 
 ## Focus
+
 - [ ] Start mornings with 10 minutes of planning before opening email
 - [ ] Revisit the "good enough" conversation next session
 
 ## Transcript
+
 > [!note]- Full transcript
 > **You:** So I've been struggling with...
 > **Coach:** That makes sense. What I'm noticing is...
@@ -97,6 +100,7 @@ If a focus note path is configured for the category, a new dated section is appe
 
 ```markdown
 ## 2025-04-28
+
 - [ ] Start mornings with 10 minutes of planning before opening email
 - [ ] Revisit the "good enough" conversation next session
 ```
@@ -141,12 +145,12 @@ A single-page interface served by FastAPI, built with HTMX and minimal vanilla J
 
 Shows health of all system dependencies, polling every 30 seconds:
 
-| Indicator | States |
-|---|---|
-| Obsidian Local REST API | Reachable / Unreachable |
-| LLM endpoint | Ready (model name + context length) / Unavailable |
-| `ffmpeg` | Found / Missing |
-| pyannote model | Downloaded / Not yet downloaded |
+| Indicator               | States                                            |
+| ----------------------- | ------------------------------------------------- |
+| Obsidian Local REST API | Reachable / Unreachable                           |
+| LLM endpoint            | Ready (model name + context length) / Unavailable |
+| `ffmpeg`                | Found / Missing                                   |
+| pyannote model          | Downloaded / Not yet downloaded                   |
 
 Clicking a failed indicator shows a brief explanation and fix hint (e.g. "Start LM Studio and load a model").
 
@@ -230,24 +234,24 @@ Stored at `~/.config/recalld/config.json`. Created on first run with universal d
 
 ### Runtime dependencies
 
-| Package | Purpose |
-|---|---|
-| `fastapi` | Web framework + SSE |
-| HTMX | Frontend interactivity, no build step |
-| `pywhispercpp` | Python bindings for whisper.cpp (Metal backend) |
-| `pyannote.audio` | Speaker diarisation (MPS backend) |
-| `sentence-transformers` | Topic boundary detection |
-| `httpx` | Async HTTP client (Obsidian API + LLM calls) |
-| `pydantic` | Config and job state validation |
-| `ffmpeg` | Audio extraction (system dependency, not Python) |
+| Package                 | Purpose                                          |
+| ----------------------- | ------------------------------------------------ |
+| `fastapi`               | Web framework + SSE                              |
+| HTMX                    | Frontend interactivity, no build step            |
+| `pywhispercpp`          | Python bindings for whisper.cpp (Metal backend)  |
+| `pyannote.audio`        | Speaker diarisation (MPS backend)                |
+| `sentence-transformers` | Topic boundary detection                         |
+| `httpx`                 | Async HTTP client (Obsidian API + LLM calls)     |
+| `pydantic`              | Config and job state validation                  |
+| `ffmpeg`                | Audio extraction (system dependency, not Python) |
 
 ### Models
 
-| Model | Size | Notes |
-|---|---|---|
-| Whisper `small` | ~500MB | Default; configurable up to `medium` if accuracy needs improving |
-| pyannote diarisation | ~1GB | Requires HuggingFace token + licence acceptance; downloaded on first run |
-| `all-MiniLM-L6-v2` | ~90MB | Downloaded automatically via `sentence-transformers` |
+| Model                | Size   | Notes                                                                    |
+| -------------------- | ------ | ------------------------------------------------------------------------ |
+| Whisper `small`      | ~500MB | Default; configurable up to `medium` if accuracy needs improving         |
+| pyannote diarisation | ~1GB   | Requires HuggingFace token + licence acceptance; downloaded on first run |
+| `all-MiniLM-L6-v2`   | ~90MB  | Downloaded automatically via `sentence-transformers`                     |
 
 ### Recommended LLM
 
