@@ -1,16 +1,60 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
 from recalld.app import templates
 from recalld.events import bus
-from recalld.jobs import DEFAULT_SCRATCH_ROOT, delete_job, load_job
+from recalld.jobs import DEFAULT_SCRATCH_ROOT, JobStage, can_restart_from_stage, delete_job, load_job, reset_job_for_rerun, save_job
+from recalld.pipeline.align import LabelledTurn
 from recalld.pipeline.runner import run_pipeline, quote_path
 
 router = APIRouter(prefix="/jobs")
+
+
+def _save_job(job) -> None:
+    save_job(job, scratch_root=DEFAULT_SCRATCH_ROOT)
+
+
+def _load_aligned_preview(job, limit: int = 5) -> str:
+    if not job.aligned_path:
+        return ""
+    turns = [LabelledTurn(**t) for t in json.loads(Path(job.aligned_path).read_text())]
+    preview = turns[:limit]
+    return "\n".join(f"**{turn.speaker}:** {turn.text}" for turn in preview)
+
+
+def _load_postprocess_state(job) -> dict:
+    if not job.postprocess_path:
+        return {}
+    data = json.loads(Path(job.postprocess_path).read_text())
+    return {
+        "summary": data.get("summary", ""),
+        "focus_points": data.get("focus_points", []),
+        "strategy": data.get("strategy", ""),
+        "topic_count": data.get("topic_count"),
+    }
+
+
+def _swap_aligned_speakers(job) -> None:
+    if not job.aligned_path:
+        return
+    turns = [LabelledTurn(**t) for t in json.loads(Path(job.aligned_path).read_text())]
+    speakers = []
+    for turn in turns:
+        if turn.speaker not in speakers:
+            speakers.append(turn.speaker)
+        if len(speakers) == 2:
+            break
+    if len(speakers) != 2:
+        return
+    swap_map = {speakers[0]: speakers[1], speakers[1]: speakers[0]}
+    for turn in turns:
+        turn.speaker = swap_map.get(turn.speaker, turn.speaker)
+    Path(job.aligned_path).write_text(json.dumps([turn.__dict__ for turn in turns]))
 
 
 @router.get("/{job_id}/row", response_class=HTMLResponse)
@@ -40,11 +84,18 @@ async def job_detail(request: Request, job_id: str):
 @router.get("/{job_id}/state", response_class=JSONResponse)
 async def job_state(job_id: str):
     job = load_job(job_id, scratch_root=DEFAULT_SCRATCH_ROOT)
+    postprocess_state = _load_postprocess_state(job)
     return JSONResponse({
         "id": job.id,
         "status": job.status.value,
         "current_stage": job.current_stage.value,
         "stage_statuses": job.stage_statuses,
+        "preview": _load_aligned_preview(job),
+        "error": job.error,
+        "can_confirm_vault": job.stage_statuses.get("vault") == "awaiting_confirmation",
+        "can_confirm_speakers": job.stage_statuses.get("align") == "awaiting_confirmation",
+        "can_swap_speakers": job.stage_statuses.get("align") == "awaiting_confirmation",
+        **postprocess_state,
     })
 
 
@@ -57,17 +108,84 @@ async def job_events(job_id: str):
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
-@router.post("/{job_id}/resume", response_class=HTMLResponse)
-async def resume_job(request: Request, job_id: str):
+def _job_source_path(job_id: str, original_filename: str):
+    job_dir = DEFAULT_SCRATCH_ROOT / job_id
+    return job_dir / original_filename
+
+
+async def _schedule_pipeline(request: Request, job_id: str, from_start: bool) -> HTMLResponse:
     import asyncio
-    from pathlib import Path
     from recalld.config import load_config
 
     job = load_job(job_id, scratch_root=DEFAULT_SCRATCH_ROOT)
+    reset_job_for_rerun(job, from_start=from_start)
+    job.status = job.status.running
+    _save_job(job)
     cfg = load_config()
-    job_dir = DEFAULT_SCRATCH_ROOT / job.id
-    source = job_dir / job.original_filename
+    source = _job_source_path(job.id, job.original_filename)
     asyncio.create_task(run_pipeline(job, source, cfg))
+    return templates.TemplateResponse(request, "processing.html", {"job": job})
+
+
+async def _restart_from_stage(request: Request, job_id: str, stage: JobStage) -> HTMLResponse:
+    import asyncio
+    from recalld.config import load_config
+
+    job = load_job(job_id, scratch_root=DEFAULT_SCRATCH_ROOT)
+    if can_restart_from_stage(job, stage):
+        reset_job_for_rerun(job, from_start=False, restart_stage=stage)
+    job.status = job.status.running
+    _save_job(job)
+    cfg = load_config()
+    source = _job_source_path(job.id, job.original_filename)
+    asyncio.create_task(run_pipeline(job, source, cfg))
+    return templates.TemplateResponse(request, "processing.html", {"job": job})
+
+
+@router.post("/{job_id}/rerun-from-failed", response_class=HTMLResponse)
+async def rerun_from_failed(request: Request, job_id: str):
+    return await _schedule_pipeline(request, job_id, from_start=False)
+
+
+@router.post("/{job_id}/rerun-from-start", response_class=HTMLResponse)
+async def rerun_from_start(request: Request, job_id: str):
+    return await _schedule_pipeline(request, job_id, from_start=True)
+
+
+@router.post("/{job_id}/restart-from/{stage}", response_class=HTMLResponse)
+async def restart_from_stage(request: Request, job_id: str, stage: JobStage):
+    return await _restart_from_stage(request, job_id, stage)
+
+
+@router.post("/{job_id}/confirm-speakers", response_class=HTMLResponse)
+async def confirm_speakers(request: Request, job_id: str):
+    import asyncio
+    from recalld.config import load_config
+    from recalld.jobs import JobStage, JobStatus
+
+    job = load_job(job_id, scratch_root=DEFAULT_SCRATCH_ROOT)
+    cfg = load_config()
+    job.current_stage = JobStage.postprocess
+    job.status = JobStatus.running
+    job.stage_statuses["align"] = "done"
+    _save_job(job)
+
+    source = _job_source_path(job.id, job.original_filename)
+    asyncio.create_task(run_pipeline(job, source, cfg))
+    return templates.TemplateResponse(request, "processing.html", {"job": job})
+
+
+@router.post("/{job_id}/swap-speakers", response_class=HTMLResponse)
+async def swap_speakers(request: Request, job_id: str):
+    job = load_job(job_id, scratch_root=DEFAULT_SCRATCH_ROOT)
+    _swap_aligned_speakers(job)
+    _save_job(job)
+    bus.publish(job.id, {
+        "stage": "align",
+        "status": "awaiting_confirmation",
+        "preview": _load_aligned_preview(job),
+        "can_confirm_speakers": True,
+    })
     return templates.TemplateResponse(request, "processing.html", {"job": job})
 
 
@@ -81,10 +199,9 @@ async def confirm_vault_write(request: Request, job_id: str):
     cfg = load_config()
     job.status = JobStatus.running
     job.stage_statuses["vault"] = "pending"
-    save_job(job, scratch_root=DEFAULT_SCRATCH_ROOT)
+    _save_job(job)
 
-    job_dir = DEFAULT_SCRATCH_ROOT / job.id
-    source = job_dir / job.original_filename
+    source = _job_source_path(job.id, job.original_filename)
     asyncio.create_task(run_pipeline(job, source, cfg))
     return templates.TemplateResponse(request, "processing.html", {"job": job})
 
@@ -120,9 +237,9 @@ async def skip_diarise(request: Request, job_id: str):
     job.stage_statuses["align"] = "done"
     job.current_stage = JobStage.postprocess
     job.status = JobStatus.running
-    save_job(job)
+    _save_job(job)
 
-    source = scratch / job.original_filename
+    source = _job_source_path(job.id, job.original_filename)
     asyncio.create_task(run_pipeline(job, source, cfg))
     return templates.TemplateResponse(request, "processing.html", {"job": job})
 
@@ -157,7 +274,7 @@ async def write_transcript_only(request: Request, job_id: str):
         await writer.write_note(cat.vault_path, filename, content)
         job.status = JobStatus.complete
         job.stage_statuses["vault"] = "done"
-        save_job(job)
+        _save_job(job)
         bus.publish(job.id, {"stage": "vault", "status": "done",
                              "obsidian_uri": f"obsidian://open?path={quote_path(cat.vault_path + '/' + filename)}",
                              "summary": "", "focus_points": []})

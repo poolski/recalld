@@ -1,3 +1,4 @@
+import json
 import pytest
 from pathlib import Path
 from fastapi.testclient import TestClient
@@ -41,7 +42,8 @@ def test_job_row_returns_html(scratch, client):
     resp = client.get(f"/jobs/{job.id}/row")
     assert resp.status_code == 200
     assert "audio.m4a" in resp.text
-    assert "Resume" in resp.text
+    assert "View details" in resp.text
+    assert "stage-restart-btn" in resp.text
     assert "Remove" in resp.text
 
 
@@ -73,6 +75,36 @@ def test_job_detail_shows_vault_confirmation_button(scratch, client):
 
     assert resp.status_code == 200
     assert "Confirm and write to vault" in resp.text
+
+
+def test_job_detail_shows_speaker_confirmation_controls(scratch, client):
+    job = create_job(category_id="test", original_filename="audio.m4a", scratch_root=scratch)
+    job.current_stage = JobStage.align
+    job.status = JobStatus.pending
+    job.stage_statuses["align"] = "awaiting_confirmation"
+    save_job(job, scratch_root=scratch)
+
+    resp = client.get(f"/jobs/{job.id}")
+
+    assert resp.status_code == 200
+    assert "Confirm speakers" in resp.text
+    assert "Swap speakers" in resp.text
+
+
+def test_job_detail_shows_rerun_buttons_for_failed_job(scratch, client):
+    job = create_job(category_id="test", original_filename="audio.m4a", scratch_root=scratch)
+    job.current_stage = JobStage.diarise
+    job.status = JobStatus.failed
+    job.stage_statuses["ingest"] = "done"
+    job.stage_statuses["transcribe"] = "done"
+    job.stage_statuses["diarise"] = "failed"
+    save_job(job, scratch_root=scratch)
+
+    resp = client.get(f"/jobs/{job.id}")
+
+    assert resp.status_code == 200
+    assert "Restart" in resp.text
+    assert "row-restart-btn" in resp.text
 
 
 def test_confirm_vault_write_updates_job_and_resumes_pipeline(scratch, client, monkeypatch):
@@ -116,3 +148,210 @@ def test_job_state_returns_latest_stage_statuses(scratch, client):
     assert resp.status_code == 200
     assert resp.json()["stage_statuses"]["ingest"] == "done"
     assert resp.json()["stage_statuses"]["transcribe"] == "done"
+
+
+def test_job_state_returns_speaker_confirmation_flags(scratch, client):
+    job = create_job(category_id="test", original_filename="audio.m4a", scratch_root=scratch)
+    aligned_path = scratch / job.id / "aligned.json"
+    aligned_path.write_text(json.dumps([
+        {"speaker": "Speaker A", "start": 0.0, "end": 1.0, "text": "Hello"},
+        {"speaker": "Speaker B", "start": 1.0, "end": 2.0, "text": "Hi"},
+    ]))
+    job.current_stage = JobStage.align
+    job.aligned_path = str(aligned_path)
+    job.stage_statuses["align"] = "awaiting_confirmation"
+    save_job(job, scratch_root=scratch)
+
+    resp = client.get(f"/jobs/{job.id}/state")
+
+    assert resp.status_code == 200
+    assert resp.json()["can_confirm_speakers"] is True
+    assert resp.json()["can_swap_speakers"] is True
+    assert "Speaker A" in resp.json()["preview"]
+
+
+def test_confirm_speakers_resumes_pipeline(scratch, client, monkeypatch):
+    job = create_job(category_id="test", original_filename="audio.m4a", scratch_root=scratch)
+    (scratch / job.id / job.original_filename).write_bytes(b"audio")
+    aligned_path = scratch / job.id / "aligned.json"
+    aligned_path.write_text(json.dumps([
+        {"speaker": "Speaker A", "start": 0.0, "end": 1.0, "text": "Hello"},
+    ]))
+    job.current_stage = JobStage.align
+    job.status = JobStatus.pending
+    job.aligned_path = str(aligned_path)
+    job.stage_statuses["align"] = "awaiting_confirmation"
+    save_job(job, scratch_root=scratch)
+
+    scheduled = {}
+
+    async def fake_run_pipeline(job_arg, source_arg, cfg_arg):
+        return None
+
+    def fake_create_task(coro):
+        scheduled["coro"] = coro
+        coro.close()
+        return None
+
+    monkeypatch.setattr("recalld.routers.jobs.run_pipeline", fake_run_pipeline)
+    monkeypatch.setattr("asyncio.create_task", fake_create_task)
+
+    resp = client.post(f"/jobs/{job.id}/confirm-speakers")
+
+    assert resp.status_code == 200
+    updated = load_job(job.id, scratch_root=scratch)
+    assert updated.current_stage == JobStage.postprocess
+    assert updated.status == JobStatus.running
+    assert updated.stage_statuses["align"] == "done"
+    assert "coro" in scheduled
+
+
+def test_swap_speakers_updates_aligned_transcript(scratch, client):
+    job = create_job(category_id="test", original_filename="audio.m4a", scratch_root=scratch)
+    aligned_path = scratch / job.id / "aligned.json"
+    aligned_path.write_text(json.dumps([
+        {"speaker": "Speaker A", "start": 0.0, "end": 1.0, "text": "Hello"},
+        {"speaker": "Speaker B", "start": 1.0, "end": 2.0, "text": "Hi"},
+    ]))
+    job.current_stage = JobStage.align
+    job.aligned_path = str(aligned_path)
+    job.stage_statuses["align"] = "awaiting_confirmation"
+    save_job(job, scratch_root=scratch)
+
+    resp = client.post(f"/jobs/{job.id}/swap-speakers")
+
+    assert resp.status_code == 200
+    updated = load_job(job.id, scratch_root=scratch)
+    swapped = json.loads(Path(updated.aligned_path).read_text())
+    assert swapped[0]["speaker"] == "Speaker B"
+    assert swapped[1]["speaker"] == "Speaker A"
+    assert updated.stage_statuses["align"] == "awaiting_confirmation"
+
+
+def test_rerun_from_failed_updates_job_and_resumes_pipeline(scratch, client, monkeypatch):
+    job = create_job(category_id="test", original_filename="audio.m4a", scratch_root=scratch)
+    (scratch / job.id / job.original_filename).write_bytes(b"audio")
+    job.current_stage = JobStage.diarise
+    job.status = JobStatus.failed
+    job.error = "boom"
+    job.stage_statuses["ingest"] = "done"
+    job.stage_statuses["transcribe"] = "done"
+    job.stage_statuses["diarise"] = "failed"
+    save_job(job, scratch_root=scratch)
+
+    scheduled = {}
+
+    async def fake_run_pipeline(job_arg, source_arg, cfg_arg):
+        return None
+
+    def fake_create_task(coro):
+        scheduled["coro"] = coro
+        coro.close()
+        return None
+
+    monkeypatch.setattr("recalld.routers.jobs.run_pipeline", fake_run_pipeline)
+    monkeypatch.setattr("asyncio.create_task", fake_create_task)
+
+    resp = client.post(f"/jobs/{job.id}/rerun-from-failed")
+
+    assert resp.status_code == 200
+    updated = load_job(job.id, scratch_root=scratch)
+    assert updated.status == JobStatus.running
+    assert updated.error is None
+    assert updated.current_stage == JobStage.diarise
+    assert updated.stage_statuses["diarise"] == "pending"
+    assert "coro" in scheduled
+
+
+def test_rerun_from_start_resets_job_and_resumes_pipeline(scratch, client, monkeypatch):
+    job = create_job(category_id="test", original_filename="audio.m4a", scratch_root=scratch)
+    (scratch / job.id / job.original_filename).write_bytes(b"audio")
+    job.current_stage = JobStage.vault
+    job.status = JobStatus.failed
+    job.error = "boom"
+    job.wav_path = "audio.wav"
+    job.transcript_path = "transcript.json"
+    job.diarisation_path = "diarisation.json"
+    job.aligned_path = "aligned.json"
+    job.postprocess_path = "postprocess.json"
+    job.topic_count = 2
+    job.chunk_strategy = "single"
+    job.stage_statuses["ingest"] = "done"
+    job.stage_statuses["transcribe"] = "done"
+    job.stage_statuses["diarise"] = "done"
+    job.stage_statuses["align"] = "done"
+    job.stage_statuses["postprocess"] = "done"
+    job.stage_statuses["vault"] = "failed"
+    save_job(job, scratch_root=scratch)
+
+    scheduled = {}
+
+    async def fake_run_pipeline(job_arg, source_arg, cfg_arg):
+        return None
+
+    def fake_create_task(coro):
+        scheduled["coro"] = coro
+        coro.close()
+        return None
+
+    monkeypatch.setattr("recalld.routers.jobs.run_pipeline", fake_run_pipeline)
+    monkeypatch.setattr("asyncio.create_task", fake_create_task)
+
+    resp = client.post(f"/jobs/{job.id}/rerun-from-start")
+
+    assert resp.status_code == 200
+    updated = load_job(job.id, scratch_root=scratch)
+    assert updated.status == JobStatus.running
+    assert updated.current_stage == JobStage.ingest
+    assert updated.wav_path is None
+    assert updated.transcript_path is None
+    assert updated.diarisation_path is None
+    assert updated.aligned_path is None
+    assert updated.postprocess_path is None
+    assert all(status == "pending" for status in updated.stage_statuses.values())
+    assert "coro" in scheduled
+
+
+def test_restart_from_stage_updates_job_and_resumes_pipeline(scratch, client, monkeypatch):
+    job = create_job(category_id="test", original_filename="audio.m4a", scratch_root=scratch)
+    (scratch / job.id / job.original_filename).write_bytes(b"audio")
+    job.current_stage = JobStage.vault
+    job.status = JobStatus.failed
+    job.error = "boom"
+    job.wav_path = "audio.wav"
+    job.transcript_path = "transcript.json"
+    job.diarisation_path = "diarisation.json"
+    job.aligned_path = "aligned.json"
+    job.postprocess_path = "postprocess.json"
+    job.stage_statuses["ingest"] = "done"
+    job.stage_statuses["transcribe"] = "done"
+    job.stage_statuses["diarise"] = "done"
+    job.stage_statuses["align"] = "done"
+    job.stage_statuses["postprocess"] = "done"
+    job.stage_statuses["vault"] = "failed"
+    save_job(job, scratch_root=scratch)
+
+    scheduled = {}
+
+    async def fake_run_pipeline(job_arg, source_arg, cfg_arg):
+        return None
+
+    def fake_create_task(coro):
+        scheduled["coro"] = coro
+        coro.close()
+        return None
+
+    monkeypatch.setattr("recalld.routers.jobs.run_pipeline", fake_run_pipeline)
+    monkeypatch.setattr("asyncio.create_task", fake_create_task)
+
+    resp = client.post(f"/jobs/{job.id}/restart-from/diarise")
+
+    assert resp.status_code == 200
+    updated = load_job(job.id, scratch_root=scratch)
+    assert updated.current_stage == JobStage.diarise
+    assert updated.status == JobStatus.running
+    assert updated.diarisation_path is None
+    assert updated.aligned_path is None
+    assert updated.postprocess_path is None
+    assert updated.stage_statuses["diarise"] == "pending"
+    assert "coro" in scheduled

@@ -36,7 +36,7 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
         # --- Ingest ---
         if job.current_stage == JobStage.ingest:
             _set_stage_status(job, "ingest", "running")
-            save_job(job)
+            _save(job)
             _emit(job, "ingest", "running")
             try:
                 wav = await asyncio.to_thread(ingest, source_path, scratch)
@@ -56,7 +56,7 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
         # --- Transcribe ---
         if job.current_stage == JobStage.transcribe:
             _set_stage_status(job, "transcribe", "running")
-            save_job(job)
+            _save(job)
             _emit(job, "transcribe", "running")
             import json
             try:
@@ -79,7 +79,7 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
         # --- Diarise ---
         if job.current_stage == JobStage.diarise:
             _set_stage_status(job, "diarise", "running")
-            save_job(job)
+            _save(job)
             _emit(job, "diarise", "running")
             import json
             try:
@@ -103,7 +103,7 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
         # --- Align ---
         if job.current_stage == JobStage.align:
             _set_stage_status(job, "align", "running")
-            save_job(job)
+            _save(job)
             import json
             from recalld.pipeline.transcribe import WordSegment
             from recalld.pipeline.diarise import SpeakerTurn
@@ -122,13 +122,21 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
             aligned_path = scratch / "aligned.json"
             aligned_path.write_text(json.dumps([t.__dict__ for t in labelled]))
             job.aligned_path = str(aligned_path)
-            _set_stage_status(job, "align", "done")
-            job.current_stage = JobStage.postprocess
+            _set_stage_status(job, "align", "awaiting_confirmation")
+            job.status = JobStatus.pending
             _save(job)
 
             preview = labelled[:5]
             preview_text = "\n".join(f"**{t.speaker}:** {t.text}" for t in preview)
-            _emit(job, "align", "done", preview=preview_text, needs_speaker_names=(speaker_map is None))
+            _emit(
+                job,
+                "align",
+                "awaiting_confirmation",
+                preview=preview_text,
+                can_confirm_speakers=True,
+                can_swap_speakers=True,
+            )
+            return
 
         # --- Post-process ---
         if job.current_stage == JobStage.postprocess:
@@ -136,7 +144,7 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
             from recalld.pipeline.align import LabelledTurn
 
             _set_stage_status(job, "postprocess", "running")
-            save_job(job)
+            _save(job)
             _emit(job, "postprocess", "running")
             labelled = [LabelledTurn(**t) for t in json.loads(Path(job.aligned_path).read_text())]
 
@@ -197,7 +205,7 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
                 return
 
             _set_stage_status(job, "vault", "running")
-            save_job(job)
+            _save(job)
             _emit(job, "vault", "running")
 
             labelled = [LabelledTurn(**t) for t in json.loads(Path(job.aligned_path).read_text())]
