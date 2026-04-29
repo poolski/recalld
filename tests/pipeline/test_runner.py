@@ -41,10 +41,15 @@ async def test_pipeline_waits_for_vault_confirmation(tmp_path, monkeypatch):
 
     with patch("recalld.pipeline.runner.detect_context_length", AsyncMock(return_value=1000)), \
          patch("recalld.pipeline.runner.postprocess", AsyncMock(return_value=result)), \
+         patch("recalld.pipeline.runner.bus.publish") as mock_publish, \
          patch("recalld.pipeline.runner.VaultWriter") as MockWriter:
         await run_pipeline(job, scratch / "session.m4a", cfg)
 
     MockWriter.assert_not_called()
+    assert any(
+        call.args[1].get("stage") == "vault" and call.args[1].get("vault_preview")
+        for call in mock_publish.call_args_list
+    )
     reloaded = load_job(job.id, scratch_root=tmp_path)
     assert reloaded.current_stage == JobStage.vault
     assert reloaded.status == JobStatus.pending

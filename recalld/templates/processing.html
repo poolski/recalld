@@ -14,7 +14,7 @@
       <span class="stage-name">{{ stage | capitalize }}</span>
       <span class="stage-msg">{% if stage == job.current_stage.value and job.error %}{{ job.error }}{% endif %}</span>
       <button type="button" class="btn-ghost row-restart-btn"
-        onclick="event.stopPropagation()"
+        onclick="event.stopPropagation(); clearStageResults('{{ stage }}'); if('{{ stage }}' === 'ingest' || '{{ stage }}' === 'transcribe' || '{{ stage }}' === 'diarise') clearStageResults('align');"
         hx-post="/jobs/{{ job.id }}/restart-from/{{ stage }}" hx-swap="none"
         title="Restart from {{ stage }}">
         ↻
@@ -24,6 +24,7 @@
     <div class="stage-body" id="stage-body-{{ stage }}"{% if not expanded %} hidden{% endif %}>
       {% if stage == "diarise" %}
       <button id="diarise-skip-btn" style="display:none; margin-top:12px" class="btn-ghost"
+        onclick="clearStageResults('align'); clearStageResults('postprocess')"
         hx-post="/jobs/{{ job.id }}/skip-diarise" hx-swap="none">
         Continue without diarisation
       </button>
@@ -32,6 +33,7 @@
       <div id="speaker-confirm-controls" style="{% if stage_status == 'awaiting_confirmation' %}display:flex{% else %}display:none{% endif %}; margin-top:12px; gap:12px; flex-wrap:wrap">
         <button id="speaker-confirm-btn" class="btn"
           {% if stage_status != "awaiting_confirmation" %}disabled{% endif %}
+          onclick="clearStageResults('postprocess')"
           hx-post="/jobs/{{ job.id }}/confirm-speakers" hx-swap="none">
           Confirm speakers
         </button>
@@ -47,7 +49,7 @@
       <div id="postprocess-chunk-info" class="stage-meta" style="display:none"></div>
       <div id="postprocess-results" class="stage-results" style="display:none">
         <h3>Summary</h3>
-        <p id="result-summary"></p>
+        <div id="result-summary"></div>
         <h3>Focus</h3>
         <ul id="result-focus"></ul>
       </div>
@@ -57,12 +59,18 @@
       </button>
       {% endif %}
       {% if stage == "vault" %}
-      <button id="vault-confirm-btn" class="btn"
-        style="{% if stage_status == 'awaiting_confirmation' %}display:inline-block{% else %}display:none{% endif %}; margin-top:12px"
-        {% if stage_status != "awaiting_confirmation" %}disabled{% endif %}
-        hx-post="/jobs/{{ job.id }}/confirm-vault-write" hx-swap="none">
-        Confirm and write to vault
-      </button>
+      <div id="vault-preview" class="stage-rich-text" style="display:none"></div>
+      <div id="vault-confirm-controls" style="{% if stage_status == 'awaiting_confirmation' %}display:block{% else %}display:none{% endif %}; margin-top:12px">
+        <div class="field">
+          <label for="vault-filename">Note title</label>
+          <input type="text" id="vault-filename" name="filename" value="{{ job.filename or '' }}" placeholder="e.g. 2026-04-29 Coaching.md">
+        </div>
+        <button id="vault-confirm-btn" class="btn"
+          {% if stage_status != "awaiting_confirmation" %}disabled{% endif %}
+          hx-post="/jobs/{{ job.id }}/confirm-vault-write" hx-include="#vault-filename" hx-swap="none">
+          Confirm and write to vault
+        </button>
+      </div>
       <a id="obsidian-link" href="#" class="btn" style="margin-top:12px; display:none" target="_blank">
         Open in Obsidian
       </a>
@@ -75,7 +83,7 @@
 </div>
 
 <div style="display:flex; gap:12px; margin-top:12px; flex-wrap:wrap">
-  <button class="btn-ghost" hx-post="/jobs/{{ job.id }}/rerun-from-start" hx-swap="none">
+  <button class="btn-ghost" onclick="clearStageResults('align'); clearStageResults('postprocess')" hx-post="/jobs/{{ job.id }}/rerun-from-start" hx-swap="none">
     Restart
   </button>
 </div>

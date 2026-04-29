@@ -3,13 +3,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
 from recalld.app import templates
 from recalld.events import bus
 from recalld.jobs import DEFAULT_SCRATCH_ROOT, JobStage, can_restart_from_stage, delete_job, load_job, reset_job_for_rerun, save_job
 from recalld.pipeline.align import LabelledTurn
+from recalld.pipeline.postprocess import PostProcessResult
+from recalld.pipeline.vault import render_session_note_preview
 from recalld.pipeline.runner import run_pipeline, quote_path
 
 router = APIRouter(prefix="/jobs")
@@ -37,6 +39,31 @@ def _load_postprocess_state(job) -> dict:
         "strategy": data.get("strategy", ""),
         "topic_count": data.get("topic_count"),
     }
+
+
+def _load_vault_preview(job, category) -> str:
+    if not category or not job.postprocess_path or not job.aligned_path:
+        return ""
+
+    postprocess_state = _load_postprocess_state(job)
+    if not postprocess_state:
+        return ""
+
+    turns = [LabelledTurn(**t) for t in json.loads(Path(job.aligned_path).read_text())]
+    result = PostProcessResult(
+        summary=postprocess_state.get("summary", ""),
+        focus_points=postprocess_state.get("focus_points", []),
+        raw_response="",
+        strategy=postprocess_state.get("strategy", ""),
+        topic_count=postprocess_state.get("topic_count") or 0,
+    )
+    return render_session_note_preview(
+        session_date=job.created_at.date(),
+        category=category.name,
+        speakers=[category.speaker_a, category.speaker_b],
+        result=result,
+        turns=turns,
+    )
 
 
 def _swap_aligned_speakers(job) -> None:
@@ -83,18 +110,30 @@ async def job_detail(request: Request, job_id: str):
 
 @router.get("/{job_id}/state", response_class=JSONResponse)
 async def job_state(job_id: str):
+    from recalld.config import load_config
+    cfg = load_config()
     job = load_job(job_id, scratch_root=DEFAULT_SCRATCH_ROOT)
     postprocess_state = _load_postprocess_state(job)
+
+    obsidian_uri = None
+    cat = next((c for c in cfg.categories if c.id == job.category_id), None)
+    if cat and job.stage_statuses.get("vault") == "done":
+        filename = job.filename or f"{job.created_at.date().isoformat()} {cat.name}.md"
+        obsidian_uri = f"obsidian://open?path={quote_path(cat.vault_path + '/' + filename)}"
+
     return JSONResponse({
         "id": job.id,
         "status": job.status.value,
         "current_stage": job.current_stage.value,
         "stage_statuses": job.stage_statuses,
         "preview": _load_aligned_preview(job),
+        "filename": job.filename,
+        "obsidian_uri": obsidian_uri,
         "error": job.error,
         "can_confirm_vault": job.stage_statuses.get("vault") == "awaiting_confirmation",
         "can_confirm_speakers": job.stage_statuses.get("align") == "awaiting_confirmation",
         "can_swap_speakers": job.stage_statuses.get("align") == "awaiting_confirmation",
+        "vault_preview": _load_vault_preview(job, cat) if job.stage_statuses.get("vault") == "awaiting_confirmation" else "",
         **postprocess_state,
     })
 
@@ -170,6 +209,8 @@ async def confirm_speakers(request: Request, job_id: str):
     job.stage_statuses["align"] = "done"
     _save_job(job)
 
+    bus.publish(job.id, {"stage": "align", "status": "done"})
+
     source = _job_source_path(job.id, job.original_filename)
     asyncio.create_task(run_pipeline(job, source, cfg))
     return templates.TemplateResponse(request, "processing.html", {"job": job})
@@ -190,13 +231,15 @@ async def swap_speakers(request: Request, job_id: str):
 
 
 @router.post("/{job_id}/confirm-vault-write", response_class=HTMLResponse)
-async def confirm_vault_write(request: Request, job_id: str):
+async def confirm_vault_write(request: Request, job_id: str, filename: str = Form(None)):
     import asyncio
     from recalld.config import load_config
     from recalld.jobs import JobStatus, save_job
 
     job = load_job(job_id, scratch_root=DEFAULT_SCRATCH_ROOT)
     cfg = load_config()
+    if filename:
+        job.filename = filename
     job.status = JobStatus.running
     job.stage_statuses["vault"] = "pending"
     _save_job(job)
@@ -239,6 +282,8 @@ async def skip_diarise(request: Request, job_id: str):
     job.status = JobStatus.running
     _save_job(job)
 
+    bus.publish(job.id, {"stage": "align", "status": "done"})
+
     source = _job_source_path(job.id, job.original_filename)
     asyncio.create_task(run_pipeline(job, source, cfg))
     return templates.TemplateResponse(request, "processing.html", {"job": job})
@@ -262,8 +307,8 @@ async def write_transcript_only(request: Request, job_id: str):
 
     if cat:
         writer = VaultWriter(cfg.obsidian_api_url, cfg.obsidian_api_key)
-        session_date = date.today()
-        filename = f"{session_date.isoformat()} {cat.name}.md"
+        session_date = job.created_at.date()
+        filename = job.filename or f"{session_date.isoformat()} {cat.name}.md"
         content = render_session_note(
             session_date=session_date,
             category=cat.name,
