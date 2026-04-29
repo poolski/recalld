@@ -18,7 +18,7 @@ router = APIRouter()
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     cfg = load_config()
-    incomplete = list_incomplete_jobs()
+    incomplete = list_incomplete_jobs(scratch_root=DEFAULT_SCRATCH_ROOT)
     return templates.TemplateResponse(request, "index.html", {
         "cfg": cfg,
         "incomplete_jobs": incomplete,
@@ -32,7 +32,11 @@ async def upload(
     category_id: str = Form(...),
 ):
     cfg = load_config()
-    job = create_job(category_id=category_id, original_filename=file.filename)
+    job = create_job(
+        category_id=category_id,
+        original_filename=file.filename,
+        scratch_root=DEFAULT_SCRATCH_ROOT,
+    )
 
     # Save uploaded file to scratch
     job_dir = DEFAULT_SCRATCH_ROOT / job.id

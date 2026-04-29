@@ -11,7 +11,7 @@ from recalld.pipeline.align import LabelledTurn
 
 SYSTEM_PROMPT = """\
 You are a session notes assistant. Given a transcript, produce:
-1. A 2-3 paragraph summary under the heading "## Summary"
+1. A 2-3 paragraph summary under the heading "## Summary". Refer to the user as "you" in the summary.
 2. A short list of focus points or action items under "## Focus" using markdown checkboxes (- [ ] item)
 Write clearly and concisely. Do not add extra headings or commentary."""
 
@@ -23,7 +23,7 @@ Format: plain prose, no headings."""
 REDUCE_SYSTEM_PROMPT = """\
 You are combining partial summaries of a coaching session transcript into final notes.
 Produce:
-1. A 2-3 paragraph summary under "## Summary"
+1. A 2-3 paragraph summary under "## Summary". Refer to the user as "you" in the summary.
 2. A focused list of action items under "## Focus" using markdown checkboxes (- [ ] item)"""
 
 

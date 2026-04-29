@@ -8,6 +8,8 @@ from recalld.jobs import (
     delete_job,
     list_incomplete_jobs,
     load_job,
+    can_restart_from_stage,
+    reset_job_for_rerun,
     save_job,
 )
 
@@ -91,3 +93,108 @@ def test_load_job_infers_stage_statuses_for_legacy_jobs(tmp_path):
     assert loaded.stage_statuses["ingest"] == "done"
     assert loaded.stage_statuses["transcribe"] == "done"
     assert loaded.stage_statuses["diarise"] == "failed"
+
+
+def test_reset_job_for_rerun_from_failed_clears_current_stage_failure(tmp_path):
+    job = create_job(category_id="adhd", original_filename="session.m4a", scratch_root=tmp_path)
+    job.current_stage = JobStage.diarise
+    job.status = JobStatus.failed
+    job.error = "boom"
+    job.wav_path = str(tmp_path / job.id / "audio.wav")
+    job.transcript_path = str(tmp_path / job.id / "transcript.json")
+    job.stage_statuses["ingest"] = "done"
+    job.stage_statuses["transcribe"] = "done"
+    job.stage_statuses["diarise"] = "failed"
+
+    reset_job_for_rerun(job, from_start=False)
+
+    assert job.current_stage == JobStage.diarise
+    assert job.status == JobStatus.pending
+    assert job.error is None
+    assert job.stage_statuses["ingest"] == "done"
+    assert job.stage_statuses["transcribe"] == "done"
+    assert job.stage_statuses["diarise"] == "pending"
+
+
+def test_reset_job_for_rerun_from_start_clears_outputs_and_statuses(tmp_path):
+    job = create_job(category_id="adhd", original_filename="session.m4a", scratch_root=tmp_path)
+    job.current_stage = JobStage.vault
+    job.status = JobStatus.failed
+    job.error = "boom"
+    job.wav_path = "audio.wav"
+    job.transcript_path = "transcript.json"
+    job.diarisation_path = "diarisation.json"
+    job.aligned_path = "aligned.json"
+    job.postprocess_path = "postprocess.json"
+    job.topic_count = 3
+    job.chunk_strategy = "map_reduce"
+    job.stage_statuses["ingest"] = "done"
+    job.stage_statuses["transcribe"] = "done"
+    job.stage_statuses["diarise"] = "done"
+    job.stage_statuses["align"] = "done"
+    job.stage_statuses["postprocess"] = "done"
+    job.stage_statuses["vault"] = "failed"
+
+    reset_job_for_rerun(job, from_start=True)
+
+    assert job.current_stage == JobStage.ingest
+    assert job.status == JobStatus.pending
+    assert job.error is None
+    assert job.wav_path is None
+    assert job.transcript_path is None
+    assert job.diarisation_path is None
+    assert job.aligned_path is None
+    assert job.postprocess_path is None
+    assert job.topic_count is None
+    assert job.chunk_strategy is None
+    assert all(status == "pending" for status in job.stage_statuses.values())
+
+
+def test_reset_job_for_rerun_from_stage_clears_outputs_from_that_stage_onward(tmp_path):
+    job = create_job(category_id="adhd", original_filename="session.m4a", scratch_root=tmp_path)
+    job.current_stage = JobStage.vault
+    job.status = JobStatus.failed
+    job.error = "boom"
+    job.wav_path = "audio.wav"
+    job.transcript_path = "transcript.json"
+    job.diarisation_path = "diarisation.json"
+    job.aligned_path = "aligned.json"
+    job.postprocess_path = "postprocess.json"
+    job.topic_count = 2
+    job.chunk_strategy = "single"
+    job.stage_statuses["ingest"] = "done"
+    job.stage_statuses["transcribe"] = "done"
+    job.stage_statuses["diarise"] = "done"
+    job.stage_statuses["align"] = "done"
+    job.stage_statuses["postprocess"] = "done"
+    job.stage_statuses["vault"] = "failed"
+
+    reset_job_for_rerun(job, from_start=False, restart_stage=JobStage.diarise)
+
+    assert job.current_stage == JobStage.diarise
+    assert job.status == JobStatus.pending
+    assert job.error is None
+    assert job.wav_path == "audio.wav"
+    assert job.transcript_path == "transcript.json"
+    assert job.diarisation_path is None
+    assert job.aligned_path is None
+    assert job.postprocess_path is None
+    assert job.topic_count is None
+    assert job.chunk_strategy is None
+    assert job.stage_statuses["ingest"] == "done"
+    assert job.stage_statuses["transcribe"] == "done"
+    assert job.stage_statuses["diarise"] == "pending"
+    assert job.stage_statuses["align"] == "pending"
+    assert job.stage_statuses["postprocess"] == "pending"
+    assert job.stage_statuses["vault"] == "pending"
+
+
+def test_can_restart_from_stage_checks_prerequisites(tmp_path):
+    job = create_job(category_id="adhd", original_filename="session.m4a", scratch_root=tmp_path)
+    job.wav_path = "audio.wav"
+    job.transcript_path = "transcript.json"
+
+    assert can_restart_from_stage(job, JobStage.ingest) is True
+    assert can_restart_from_stage(job, JobStage.transcribe) is True
+    assert can_restart_from_stage(job, JobStage.diarise) is True
+    assert can_restart_from_stage(job, JobStage.align) is False

@@ -30,6 +30,7 @@ class JobStatus(str, Enum):
 
 
 STAGE_NAMES = tuple(stage.value for stage in JobStage)
+STAGE_ORDER = {stage.value: index for index, stage in enumerate(JobStage)}
 
 
 def default_stage_statuses() -> dict[str, str]:
@@ -52,6 +53,22 @@ def _infer_stage_statuses(current_stage: JobStage, status: JobStatus) -> dict[st
         stage_statuses[current_stage.value] = "running"
 
     return stage_statuses
+
+
+def can_restart_from_stage(job: "Job", stage: JobStage) -> bool:
+    if stage == JobStage.ingest:
+        return True
+    if stage == JobStage.transcribe:
+        return job.wav_path is not None
+    if stage == JobStage.diarise:
+        return job.wav_path is not None
+    if stage == JobStage.align:
+        return job.transcript_path is not None and job.diarisation_path is not None
+    if stage == JobStage.postprocess:
+        return job.aligned_path is not None
+    if stage == JobStage.vault:
+        return job.aligned_path is not None and job.postprocess_path is not None
+    return False
 
 
 class Job(BaseModel):
@@ -106,6 +123,49 @@ def save_job(job: Job, scratch_root: Path = DEFAULT_SCRATCH_ROOT) -> None:
 def load_job(job_id: str, scratch_root: Path = DEFAULT_SCRATCH_ROOT) -> Job:
     path = _job_dir(job_id, scratch_root) / "job.json"
     return Job.model_validate_json(path.read_text())
+
+
+def reset_job_for_rerun(job: Job, from_start: bool, restart_stage: JobStage | None = None) -> None:
+    job.status = JobStatus.pending
+    job.error = None
+
+    if from_start:
+        job.current_stage = JobStage.ingest
+        job.stage_statuses = default_stage_statuses()
+        job.wav_path = None
+        job.transcript_path = None
+        job.diarisation_path = None
+        job.aligned_path = None
+        job.postprocess_path = None
+        job.speaker_00 = None
+        job.speaker_01 = None
+        job.topic_count = None
+        job.chunk_strategy = None
+        return
+
+    if restart_stage is not None:
+        job.current_stage = restart_stage
+        for stage in STAGE_NAMES:
+            if STAGE_ORDER[stage] >= STAGE_ORDER[restart_stage.value]:
+                job.stage_statuses[stage] = "pending"
+        if STAGE_ORDER[restart_stage.value] <= STAGE_ORDER[JobStage.diarise.value]:
+            job.diarisation_path = None
+            job.aligned_path = None
+            job.postprocess_path = None
+            job.topic_count = None
+            job.chunk_strategy = None
+        elif restart_stage == JobStage.align:
+            job.aligned_path = None
+            job.postprocess_path = None
+            job.topic_count = None
+            job.chunk_strategy = None
+        elif restart_stage == JobStage.postprocess:
+            job.postprocess_path = None
+            job.topic_count = None
+            job.chunk_strategy = None
+        return
+
+    job.stage_statuses[job.current_stage.value] = "pending"
 
 
 def delete_job(job_id: str, scratch_root: Path = DEFAULT_SCRATCH_ROOT) -> None:
