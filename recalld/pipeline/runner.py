@@ -20,6 +20,14 @@ def _emit(job: Job, stage: str, status: str, message: str = "", **extra) -> None
     bus.publish(job.id, {"stage": stage, "status": status, "message": message, **extra})
 
 
+def _set_stage_status(job: Job, stage: str, status: str) -> None:
+    job.stage_statuses[stage] = status
+
+
+def _save(job: Job) -> None:
+    save_job(job, scratch_root=DEFAULT_SCRATCH_ROOT)
+
+
 async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
     scratch = DEFAULT_SCRATCH_ROOT / job.id
     job.status = JobStatus.running
@@ -27,22 +35,28 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
     try:
         # --- Ingest ---
         if job.current_stage == JobStage.ingest:
+            _set_stage_status(job, "ingest", "running")
+            save_job(job)
             _emit(job, "ingest", "running")
             try:
                 wav = await asyncio.to_thread(ingest, source_path, scratch)
             except IngestError as e:
                 job.status = JobStatus.failed
                 job.error = str(e)
-                save_job(job)
+                _set_stage_status(job, "ingest", "failed")
+                _save(job)
                 _emit(job, "ingest", "failed", str(e))
                 return
             job.wav_path = str(wav)
+            _set_stage_status(job, "ingest", "done")
             job.current_stage = JobStage.transcribe
-            save_job(job)
+            _save(job)
             _emit(job, "ingest", "done")
 
         # --- Transcribe ---
         if job.current_stage == JobStage.transcribe:
+            _set_stage_status(job, "transcribe", "running")
+            save_job(job)
             _emit(job, "transcribe", "running")
             import json
             try:
@@ -50,18 +64,22 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
             except Exception as e:
                 job.status = JobStatus.failed
                 job.error = str(e)
-                save_job(job)
+                _set_stage_status(job, "transcribe", "failed")
+                _save(job)
                 _emit(job, "transcribe", "failed", str(e))
                 return
             transcript_path = scratch / "transcript.json"
             transcript_path.write_text(json.dumps([w.__dict__ for w in words]))
             job.transcript_path = str(transcript_path)
+            _set_stage_status(job, "transcribe", "done")
             job.current_stage = JobStage.diarise
-            save_job(job)
+            _save(job)
             _emit(job, "transcribe", "done")
 
         # --- Diarise ---
         if job.current_stage == JobStage.diarise:
+            _set_stage_status(job, "diarise", "running")
+            save_job(job)
             _emit(job, "diarise", "running")
             import json
             try:
@@ -70,18 +88,22 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
                 # Offer to continue with unlabelled transcript
                 job.status = JobStatus.failed
                 job.error = str(e)
-                save_job(job)
+                _set_stage_status(job, "diarise", "failed")
+                _save(job)
                 _emit(job, "diarise", "failed", str(e), can_skip=True)
                 return
             diar_path = scratch / "diarisation.json"
             diar_path.write_text(json.dumps([t.__dict__ for t in turns]))
             job.diarisation_path = str(diar_path)
+            _set_stage_status(job, "diarise", "done")
             job.current_stage = JobStage.align
-            save_job(job)
+            _save(job)
             _emit(job, "diarise", "done")
 
         # --- Align ---
         if job.current_stage == JobStage.align:
+            _set_stage_status(job, "align", "running")
+            save_job(job)
             import json
             from recalld.pipeline.transcribe import WordSegment
             from recalld.pipeline.diarise import SpeakerTurn
@@ -100,8 +122,9 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
             aligned_path = scratch / "aligned.json"
             aligned_path.write_text(json.dumps([t.__dict__ for t in labelled]))
             job.aligned_path = str(aligned_path)
+            _set_stage_status(job, "align", "done")
             job.current_stage = JobStage.postprocess
-            save_job(job)
+            _save(job)
 
             preview = labelled[:5]
             preview_text = "\n".join(f"**{t.speaker}:** {t.text}" for t in preview)
@@ -112,6 +135,8 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
             import json
             from recalld.pipeline.align import LabelledTurn
 
+            _set_stage_status(job, "postprocess", "running")
+            save_job(job)
             _emit(job, "postprocess", "running")
             labelled = [LabelledTurn(**t) for t in json.loads(Path(job.aligned_path).read_text())]
 
@@ -129,7 +154,8 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
             except Exception as e:
                 job.status = JobStatus.failed
                 job.error = str(e)
-                save_job(job)
+                _set_stage_status(job, "postprocess", "failed")
+                _save(job)
                 _emit(job, "postprocess", "failed", str(e), can_write_transcript_only=True)
                 return
 
@@ -143,9 +169,22 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
             job.postprocess_path = str(pp_path)
             job.topic_count = result.topic_count
             job.chunk_strategy = result.strategy
+            _set_stage_status(job, "postprocess", "done")
             job.current_stage = JobStage.vault
-            save_job(job)
-            _emit(job, "postprocess", "done", topic_count=result.topic_count, strategy=result.strategy)
+            job.status = JobStatus.pending
+            _set_stage_status(job, "vault", "awaiting_confirmation")
+            _save(job)
+            _emit(
+                job,
+                "postprocess",
+                "done",
+                topic_count=result.topic_count,
+                strategy=result.strategy,
+                summary=result.summary,
+                focus_points=result.focus_points,
+            )
+            _emit(job, "vault", "awaiting_confirmation", can_confirm_vault=True)
+            return
 
         # --- Vault write ---
         if job.current_stage == JobStage.vault:
@@ -153,6 +192,12 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
             from recalld.pipeline.align import LabelledTurn
             from recalld.pipeline.postprocess import PostProcessResult
 
+            if job.stage_statuses.get("vault") == "awaiting_confirmation":
+                _emit(job, "vault", "awaiting_confirmation", can_confirm_vault=True)
+                return
+
+            _set_stage_status(job, "vault", "running")
+            save_job(job)
             _emit(job, "vault", "running")
 
             labelled = [LabelledTurn(**t) for t in json.loads(Path(job.aligned_path).read_text())]
@@ -164,7 +209,8 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
             if not cat:
                 job.status = JobStatus.failed
                 job.error = "Category not found"
-                save_job(job)
+                _set_stage_status(job, "vault", "failed")
+                _save(job)
                 _emit(job, "vault", "failed", "Category not found")
                 return
 
@@ -184,7 +230,8 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
             except Exception as e:
                 job.status = JobStatus.failed
                 job.error = str(e)
-                save_job(job)
+                _set_stage_status(job, "vault", "failed")
+                _save(job)
                 _emit(job, "vault", "failed", str(e))
                 return
 
@@ -201,7 +248,8 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
                     pass  # Focus note failure does not affect session note
 
             job.status = JobStatus.complete
-            save_job(job)
+            _set_stage_status(job, "vault", "done")
+            _save(job)
             _emit(job, "vault", "done",
                   obsidian_uri=f"obsidian://open?path={quote_path(cat.vault_path + '/' + filename)}",
                   summary=result.summary if result else "",
@@ -210,7 +258,8 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
     except Exception as e:
         job.status = JobStatus.failed
         job.error = str(e)
-        save_job(job)
+        _set_stage_status(job, job.current_stage.value, "failed")
+        _save(job)
         _emit(job, job.current_stage.value, "failed", str(e))
 
 

@@ -35,6 +35,10 @@
   hx-post="/jobs/{{ job.id }}/write-transcript-only" hx-swap="none">
   Write transcript-only note
 </button>
+<button id="vault-confirm-btn" style="display:none; margin-top:12px" class="btn"
+  hx-post="/jobs/{{ job.id }}/confirm-vault-write" hx-swap="none">
+  Confirm and write to vault
+</button>
 
 <details class="debug-panel">
   <summary>Debug log</summary>
@@ -45,5 +49,7 @@
   </div>
 </details>
 
-<script>connectSSE("{{ job.id }}");</script>
+<script>
+  connectSSE("{{ job.id }}", {{ job.stage_statuses | tojson }});
+</script>
 {% endblock %}
