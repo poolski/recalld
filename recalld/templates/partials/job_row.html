@@ -1,14 +1,18 @@
 <li class="job-item">
-  <span class="filename">{{ job.original_filename }}</span>
-  <span class="stage">{{ job.current_stage.value }}</span>
-  <button type="button" class="btn-ghost stage-restart-btn" style="padding:4px 10px;font-size:12px"
-    hx-post="/jobs/{{ job.id }}/restart-from/{{ job.current_stage.value }}" hx-swap="none"
-    title="Restart from {{ job.current_stage.value }}">
-    ↻
-  </button>
-  <a href="/jobs/{{ job.id }}" class="btn-ghost" style="padding:4px 12px;font-size:12px;text-decoration:none">View details</a>
-  <button class="btn-ghost" style="padding:4px 12px;font-size:12px;color:var(--red);border-color:var(--red)"
-    hx-get="/jobs/{{ job.id }}/confirm-delete"
-    hx-target="closest li"
-    hx-swap="outerHTML">Remove</button>
+  <div class="job-meta">
+    <span class="job-filename">{{ job.original_filename }}</span>
+    <span class="job-stage">{{ job.current_stage.value }}</span>
+  </div>
+  <div class="job-actions">
+    <button type="button" class="btn-ghost stage-restart-btn"
+      hx-post="/jobs/{{ job.id }}/restart-from/{{ job.current_stage.value }}" hx-swap="none"
+      title="Restart from {{ job.current_stage.value }}">
+      Restart
+    </button>
+    <a href="/jobs/{{ job.id }}" class="btn-ghost">View details</a>
+    <button class="btn-ghost danger"
+      hx-get="/jobs/{{ job.id }}/confirm-delete"
+      hx-target="closest li"
+      hx-swap="outerHTML">Remove</button>
+  </div>
 </li>

@@ -1,25 +1,26 @@
-.PHONY: setup install run test lint clean
+.PHONY: setup build run test lint fmt clean whispercpp
 
 setup:
-	uv venv
+	go mod download
 
-install:
-	uv sync --all-groups
+whispercpp:
+	cmake -S third_party/whispercpp -B third_party/whispercpp/build -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=OFF -DWHISPER_BUILD_SERVER=OFF -DGGML_CCACHE=OFF -DCMAKE_BUILD_TYPE=Release
+	cmake --build third_party/whispercpp/build --target whisper -j4
 
-run:
-	uv run recalld
+build: whispercpp
+	go build -o bin/recalld .
 
-test:
-	uv run pytest
+run: whispercpp
+	go run .
 
-lint:
-	uv run ruff check recalld tests
-	uv run ruff format --check recalld tests
+test: whispercpp
+	go test ./...
+
+lint: whispercpp
+	go vet ./...
 
 fmt:
-	uv run ruff format recalld tests
-	uv run ruff check --fix recalld tests
+	gofmt -w *.go
 
 clean:
-	rm -rf .venv __pycache__ .pytest_cache dist
-	find . -type d -name "__pycache__" -exec rm -rf {} +
+	rm -rf bin third_party/whispercpp/build .pytest_cache __pycache__ */__pycache__

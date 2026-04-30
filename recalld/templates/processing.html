@@ -1,92 +1,111 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Processing: {{ job.original_filename }}</h1>
-
-<div class="card">
-<ul class="stage-list">
-  {% for stage in ["ingest", "transcribe", "diarise", "align", "postprocess", "vault"] %}
-  {% set stage_status = job.stage_statuses.get(stage, "pending") %}
-  {% set expanded = stage_status in ["running", "failed", "awaiting_confirmation"] or (stage == job.current_stage.value and job.error) %}
-  <li class="stage-item" id="stage-{{ stage }}">
-    <div role="button" tabindex="0" class="stage-toggle{% if expanded %} expanded{% endif %}" aria-expanded="{{ 'true' if expanded else 'false' }}"
-      onclick="toggleStage('{{ stage }}')">
-      <span class="stage-chevron" aria-hidden="true"></span>
-      <span class="stage-name">{{ stage | capitalize }}</span>
-      <span class="stage-msg">{% if stage == job.current_stage.value and job.error %}{{ job.error }}{% endif %}</span>
-      <button type="button" class="btn-ghost row-restart-btn"
-        onclick="event.stopPropagation(); clearStageResults('{{ stage }}'); if('{{ stage }}' === 'ingest' || '{{ stage }}' === 'transcribe' || '{{ stage }}' === 'diarise') clearStageResults('align');"
-        hx-post="/jobs/{{ job.id }}/restart-from/{{ stage }}" hx-swap="none"
-        title="Restart from {{ stage }}">
-        ↻
-      </button>
-      <span class="stage-pill status-{{ stage_status }}" id="stage-pill-{{ stage }}">{{ stage_status | replace("_", " ") }}</span>
+<section class="processing-layout">
+  <aside class="panel processing-summary">
+    <div class="section-head">
+      <h1>Processing</h1>
+      <p>{{ job.original_filename }}</p>
     </div>
-    <div class="stage-body" id="stage-body-{{ stage }}"{% if not expanded %} hidden{% endif %}>
-      {% if stage == "diarise" %}
-      <button id="diarise-skip-btn" style="display:none; margin-top:12px" class="btn-ghost"
-        onclick="clearStageResults('align'); clearStageResults('postprocess')"
-        hx-post="/jobs/{{ job.id }}/skip-diarise" hx-swap="none">
-        Continue without diarisation
-      </button>
-      {% endif %}
-      {% if stage == "align" %}
-      <div id="speaker-confirm-controls" style="{% if stage_status == 'awaiting_confirmation' %}display:flex{% else %}display:none{% endif %}; margin-top:12px; gap:12px; flex-wrap:wrap">
-        <button id="speaker-confirm-btn" class="btn"
-          {% if stage_status != "awaiting_confirmation" %}disabled{% endif %}
-          onclick="clearStageResults('postprocess')"
-          hx-post="/jobs/{{ job.id }}/confirm-speakers" hx-swap="none">
-          Confirm speakers
-        </button>
-        <button id="speaker-swap-btn" class="btn-ghost"
-          {% if stage_status != "awaiting_confirmation" %}disabled{% endif %}
-          hx-post="/jobs/{{ job.id }}/swap-speakers" hx-swap="none">
-          Swap speakers
-        </button>
+    <p class="processing-copy">Follow each stage as recalld works through the file. Confirmation steps appear inline when needed.</p>
+
+    <div class="processing-meta">
+      <div class="summary-card">
+        <span>Current stage</span>
+        <strong>{{ job.current_stage.value | capitalize }}</strong>
       </div>
-      <div id="align-preview" class="stage-rich-text" style="display:none"></div>
-      {% endif %}
-      {% if stage == "postprocess" %}
-      <div id="postprocess-chunk-info" class="stage-meta" style="display:none"></div>
-      <div id="postprocess-results" class="stage-results" style="display:none">
-        <h3>Summary</h3>
-        <div id="result-summary"></div>
-        <h3>Focus</h3>
-        <ul id="result-focus"></ul>
+      <div class="summary-card">
+        <span>Status</span>
+        <strong>{{ job.status.value | capitalize }}</strong>
       </div>
-      <button id="postprocess-fallback-btn" style="display:none; margin-top:12px" class="btn-ghost"
-        hx-post="/jobs/{{ job.id }}/write-transcript-only" hx-swap="none">
-        Write transcript-only note
+    </div>
+
+    <div class="processing-actions">
+      <button class="btn-ghost" onclick="clearStageResults('align'); clearStageResults('postprocess')" hx-post="/jobs/{{ job.id }}/rerun-from-start" hx-swap="none">
+        Restart
       </button>
-      {% endif %}
-      {% if stage == "vault" %}
-      <div id="vault-preview" class="stage-rich-text" style="display:none"></div>
-      <div id="vault-confirm-controls" style="{% if stage_status == 'awaiting_confirmation' %}display:block{% else %}display:none{% endif %}; margin-top:12px">
-        <div class="field">
-          <label for="vault-filename">Note title</label>
-          <input type="text" id="vault-filename" name="filename" value="{{ job.filename or '' }}" placeholder="e.g. 2026-04-29 Coaching.md">
+    </div>
+  </aside>
+
+  <section class="panel processing-workflow">
+    <ul class="stage-list">
+      {% for stage in ["ingest", "transcribe", "diarise", "align", "postprocess", "vault"] %}
+      {% set stage_status = job.stage_statuses.get(stage, "pending") %}
+      {% set expanded = stage_status in ["running", "failed", "awaiting_confirmation"] or (stage == job.current_stage.value and job.error) %}
+      <li class="stage-item" id="stage-{{ stage }}">
+        <div role="button" tabindex="0" class="stage-toggle{% if expanded %} expanded{% endif %}" aria-expanded="{{ 'true' if expanded else 'false' }}"
+          onclick="toggleStage('{{ stage }}')">
+          <span class="stage-chevron" aria-hidden="true"></span>
+          <span class="stage-name">{{ stage | capitalize }}</span>
+          <span class="stage-msg">{% if stage == job.current_stage.value and job.error %}{{ job.error }}{% endif %}</span>
+          <button type="button" class="btn-ghost row-restart-btn"
+            onclick="event.stopPropagation(); clearStageResults('{{ stage }}'); if('{{ stage }}' === 'ingest' || '{{ stage }}' === 'transcribe' || '{{ stage }}' === 'diarise') clearStageResults('align');"
+            hx-post="/jobs/{{ job.id }}/restart-from/{{ stage }}" hx-swap="none"
+            title="Restart from {{ stage }}">
+            Restart
+          </button>
+          <span class="stage-pill status-{{ stage_status }}" id="stage-pill-{{ stage }}">{{ stage_status | replace("_", " ") }}</span>
         </div>
-        <button id="vault-confirm-btn" class="btn"
-          {% if stage_status != "awaiting_confirmation" %}disabled{% endif %}
-          hx-post="/jobs/{{ job.id }}/confirm-vault-write" hx-include="#vault-filename" hx-swap="none">
-          Confirm and write to vault
-        </button>
-      </div>
-      <a id="obsidian-link" href="#" class="btn" style="margin-top:12px; display:none" target="_blank">
-        Open in Obsidian
-      </a>
-      {% endif %}
-      <pre id="stage-log-{{ stage }}" class="stage-log"></pre>
-    </div>
-  </li>
-  {% endfor %}
-</ul>
-</div>
-
-<div style="display:flex; gap:12px; margin-top:12px; flex-wrap:wrap">
-  <button class="btn-ghost" onclick="clearStageResults('align'); clearStageResults('postprocess')" hx-post="/jobs/{{ job.id }}/rerun-from-start" hx-swap="none">
-    Restart
-  </button>
-</div>
+        <div class="stage-body" id="stage-body-{{ stage }}"{% if not expanded %} hidden{% endif %}>
+          {% if stage == "diarise" %}
+          <button id="diarise-skip-btn" class="btn-ghost stage-inline-action"
+            onclick="clearStageResults('align'); clearStageResults('postprocess')"
+            hx-post="/jobs/{{ job.id }}/skip-diarise" hx-swap="none">
+            Continue without diarisation
+          </button>
+          {% endif %}
+          {% if stage == "align" %}
+          <div id="speaker-confirm-controls" class="inline-actions {% if stage_status == 'awaiting_confirmation' %}is-visible{% endif %}">
+            <button id="speaker-confirm-btn" class="btn"
+              {% if stage_status != "awaiting_confirmation" %}disabled{% endif %}
+              onclick="clearStageResults('postprocess')"
+              hx-post="/jobs/{{ job.id }}/confirm-speakers" hx-swap="none">
+              Confirm speakers
+            </button>
+            <button id="speaker-swap-btn" class="btn-ghost"
+              {% if stage_status != "awaiting_confirmation" %}disabled{% endif %}
+              hx-post="/jobs/{{ job.id }}/swap-speakers" hx-swap="none">
+              Swap speakers
+            </button>
+          </div>
+          <div id="align-preview" class="stage-rich-text" style="display:none"></div>
+          {% endif %}
+          {% if stage == "postprocess" %}
+          <div id="postprocess-chunk-info" class="stage-meta" style="display:none"></div>
+          <div id="postprocess-results" class="stage-results" style="display:none">
+            <h3>Summary</h3>
+            <div id="result-summary"></div>
+            <h3>Focus</h3>
+            <ul id="result-focus"></ul>
+          </div>
+          <button id="postprocess-fallback-btn" class="btn-ghost stage-inline-action"
+            hx-post="/jobs/{{ job.id }}/write-transcript-only" hx-swap="none">
+            Write transcript-only note
+          </button>
+          {% endif %}
+          {% if stage == "vault" %}
+          <div id="vault-preview" class="stage-rich-text" style="display:none"></div>
+          <div id="vault-confirm-controls" class="vault-confirm {% if stage_status == 'awaiting_confirmation' %}is-visible{% endif %}">
+            <div class="field">
+              <label for="vault-filename">Note title</label>
+              <input type="text" id="vault-filename" name="filename" value="{{ job.filename or '' }}" placeholder="e.g. 2026-04-29 Coaching.md">
+            </div>
+            <button id="vault-confirm-btn" class="btn"
+              {% if stage_status != "awaiting_confirmation" %}disabled{% endif %}
+              hx-post="/jobs/{{ job.id }}/confirm-vault-write" hx-include="#vault-filename" hx-swap="none">
+              Confirm and write to vault
+            </button>
+          </div>
+          <a id="obsidian-link" href="#" class="btn btn-secondary" target="_blank" rel="noreferrer" style="display:none">
+            Open in Obsidian
+          </a>
+          {% endif %}
+          <pre id="stage-log-{{ stage }}" class="stage-log"></pre>
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+</section>
 
 <script>
   connectSSE("{{ job.id }}", {{ job.stage_statuses | tojson }});

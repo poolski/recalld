@@ -1,0 +1,46 @@
+{{ define "base" -}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>recalld</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/htmx.min.js"></script>
+  <script src="/static/marked.min.js"></script>
+  <script src="/static/app.js"></script>
+</head>
+<body>
+<div class="app-shell">
+  <header class="app-header">
+    <div class="header-inner">
+      <div class="brand-lockup">
+        <span class="brand-mark">r</span>
+        <div>
+          <div class="brand">recalld</div>
+          <p class="brand-subtitle">Capture meetings, clean them up, and ship them to Obsidian.</p>
+        </div>
+      </div>
+      <div id="status-bar-indicators"
+           class="status-strip"
+           hx-get="/settings/status"
+           hx-trigger="load, every 30s"
+           hx-swap="innerHTML">
+        <span class="status-indicator"><span class="dot yellow"></span> checking…</span>
+      </div>
+    </div>
+    <nav class="app-nav">
+      <a href="/" {{ if eq .ActivePath "/" }}class="active"{{ end }}>Upload</a>
+      <a href="/settings/" {{ if hasPrefix .ActivePath "/settings" }}class="active"{{ end }}>Settings</a>
+    </nav>
+  </header>
+<div id="status-popover" class="status-popover" hidden aria-live="polite"></div>
+
+<main class="app-main">
+  {{ .Body }}
+</main>
+</div>
+
+</body>
+</html>
+{{- end }}

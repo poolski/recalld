@@ -1,0 +1,18 @@
+{{ define "job_confirm_delete" }}
+<li class="job-item">
+  <div class="job-meta">
+    <span class="job-filename">Remove <strong>{{ .OriginalFilename }}</strong>?</span>
+    <span class="job-stage">This will delete the scratch job and its uploads.</span>
+  </div>
+  <div class="job-actions">
+    <button class="btn-ghost danger"
+      hx-delete="/jobs/{{ .ID }}"
+      hx-target="closest li"
+      hx-swap="delete">Delete</button>
+    <button class="btn-ghost"
+      hx-get="/jobs/{{ .ID }}/row"
+      hx-target="closest li"
+      hx-swap="outerHTML">Cancel</button>
+  </div>
+</li>
+{{ end }}

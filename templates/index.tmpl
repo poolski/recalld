@@ -1,0 +1,76 @@
+{{ define "index_body" }}
+<section class="page-hero">
+  <div class="hero-copy">
+    <h1>Start a new recording</h1>
+    <p>Drop in a meeting file, choose the right category, and let recalld move it through transcription, diarisation, and vault writing.</p>
+  </div>
+  <div class="hero-panel">
+    <div class="hero-panel-label">Current setup</div>
+    <div class="hero-panel-row"><span>Categories</span><strong>{{ len .Config.Categories }}</strong></div>
+    <div class="hero-panel-row"><span>Queued jobs</span><strong>{{ len .IncompleteJobs }}</strong></div>
+  </div>
+</section>
+
+<section class="dashboard-grid">
+  <div class="panel panel-upload">
+    {{ if not .Config.Categories }}
+    <div class="alert error">
+      No categories configured. <a href="/settings/">Add one in Settings</a> before uploading.
+    </div>
+    {{ else }}
+    <form id="upload-form" class="upload-form" action="/upload" method="post" enctype="multipart/form-data">
+      <label class="drop-zone" id="drop-zone">
+        <input type="file" id="file-input" name="file" accept=".m4a,.mp4,.wav,.mov,.mkv,.webm" required>
+        <span class="drop-zone-icon" aria-hidden="true">
+          <svg width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+            <path d="M12 16V4m0 0L8 8m4-4 4 4M4 20h16"/>
+          </svg>
+        </span>
+        <span class="drop-zone-copy">
+          <strong>Drop a recording here</strong>
+          <span>or click to browse</span>
+        </span>
+        <span class="drop-zone-filename" data-drop-filename>Waiting for a file</span>
+      </label>
+
+      <div class="field">
+        <label for="category_id">Category</label>
+        <select name="category_id" id="category_id">
+          {{ range .Config.Categories }}
+          <option value="{{ .ID }}" {{ if eq $.Config.LastUsedCategory .ID }}selected{{ end }}>
+            {{ .Name }}
+          </option>
+          {{ end }}
+        </select>
+      </div>
+
+      <div class="form-actions">
+        <button type="submit">Process recording</button>
+      </div>
+    </form>
+    {{ end }}
+  </div>
+
+  <aside class="panel panel-jobs">
+    <div class="panel-heading">
+      <div>
+        <h2>Incomplete jobs</h2>
+        <p>Pick up where you left off or inspect a stage before restarting.</p>
+      </div>
+    </div>
+
+    {{ if .IncompleteJobs }}
+    <ul class="job-list">
+      {{ range .IncompleteJobs }}
+      {{ template "job_row" . }}
+      {{ end }}
+    </ul>
+    {{ else }}
+    <div class="empty-state">
+      <strong>No jobs waiting.</strong>
+      <p>New uploads will appear here as soon as processing starts.</p>
+    </div>
+    {{ end }}
+  </aside>
+</section>
+{{ end }}

@@ -1,0 +1,242 @@
+{{ define "settings_body" }}
+<section class="page-hero compact">
+  <div class="hero-copy">
+    <h1>Settings</h1>
+    <p>Keep the integrations, models, and note structure aligned with the way you work.</p>
+  </div>
+  {{ if .Saved }}
+  <div class="notice success">Settings saved.</div>
+  {{ end }}
+</section>
+
+<form class="settings-layout" action="/settings/" method="post">
+  <section class="panel settings-section">
+    <div class="section-head">
+      <h2>Vault</h2>
+      <p>Where completed notes will land.</p>
+    </div>
+    <div class="field">
+      <label>Vault name</label>
+      <input type="text" name="vault_name" value="{{ .Config.VaultName }}" placeholder="Personal">
+    </div>
+  </section>
+
+  <section class="panel settings-section">
+    <div class="section-head">
+      <h2>Obsidian</h2>
+      <p>Talk to Obsidian through its local REST API.</p>
+    </div>
+    <div class="field">
+      <label>Local REST API URL</label>
+      <input type="url" name="obsidian_api_url" value="{{ .Config.ObsidianAPIURL }}">
+    </div>
+    <div class="field">
+      <label>API Key</label>
+      <input type="password" name="obsidian_api_key" value="" placeholder="{{ if .ObsidianAPIKeySet }}Leave blank to keep existing{{ else }}Leave blank if not set{{ end }}">
+      {{ if .ObsidianAPIKeySet }}
+      <p class="field-hint">Stored secret detected.</p>
+      {{ end }}
+    </div>
+  </section>
+
+  <section class="panel settings-section wide">
+    <div class="section-head">
+      <h2>LLM</h2>
+      <p>Model selection and context headroom.</p>
+    </div>
+    <div class="field">
+      <label>Endpoint URL</label>
+      <input type="url" name="llm_base_url" value="{{ .Config.LLMBaseURL }}">
+    </div>
+    <div class="field">
+      <label>Context headroom (0.0–1.0)</label>
+      <input type="number" name="llm_context_headroom" value="{{ .Config.LLMContextHeadroom }}" step="0.05" min="0.1" max="1.0">
+    </div>
+    <div class="summary-cards">
+      <div class="summary-card">
+        <span>Current model</span>
+        <strong>{{ if .CurrentModel }}{{ .CurrentModel.ID }}{{ else }}{{ if .Config.LLMModel }}{{ .Config.LLMModel }}{{ else }}Not selected{{ end }}{{ end }}</strong>
+      </div>
+      <div class="summary-card">
+        <span>Loaded</span>
+        <strong>{{ if .CurrentModel }}{{ if .CurrentModel.IsLoaded }}Yes{{ else }}No{{ end }}{{ else }}No{{ end }}</strong>
+      </div>
+      <div class="summary-card">
+        <span>Detected context length</span>
+        <strong>{{ if gt .DetectedContextLength 0 }}{{ commaInt .DetectedContextLength }}{{ else }}Not detected{{ end }}</strong>
+      </div>
+      <div class="summary-card">
+        <span>Loaded context length</span>
+        <strong>{{ if .CurrentModel }}{{ if .CurrentModel.LoadedContextLength }}{{ commaInt .CurrentModel.LoadedContextLength }}{{ else }}Not loaded{{ end }}{{ else }}Not loaded{{ end }}</strong>
+      </div>
+      <div class="summary-card">
+        <span>Maximum context length</span>
+        <strong>{{ if .CurrentModel }}{{ if .CurrentModel.MaxContextLength }}{{ commaInt .CurrentModel.MaxContextLength }}{{ else }}Unknown{{ end }}{{ else }}Unknown{{ end }} tokens</strong>
+      </div>
+      <div class="summary-card">
+        <span>Headroom budget</span>
+        <strong>{{ if gt .HeadroomBudget 0 }}{{ commaInt .HeadroomBudget }}{{ else }}Unknown{{ end }} tokens</strong>
+      </div>
+    </div>
+
+    <div class="field">
+      <div class="field-row">
+        <label>Available models</label>
+        <button type="button" class="btn-ghost" onclick="window.location.href='/settings/'">Refresh models</button>
+      </div>
+      {{ if .ModelRefreshUnavailable }}
+      <p class="field-hint danger-text">
+        Could not refresh models from the provider. Keeping selected model: <code>{{ .Config.LLMModel }}</code>.
+      </p>
+      {{ end }}
+      {{ if .ProviderModels }}
+      <div class="models-table-wrap">
+        <table class="models-table">
+          <thead>
+            <tr>
+              <th>Use</th>
+              <th>Model</th>
+              <th>Loaded</th>
+              <th>Loaded context length</th>
+              <th>Maximum context length</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{ range .ProviderModels }}
+            <tr>
+              <td>
+                <input type="radio" name="llm_model" value="{{ .ID }}" {{ if .Selected }}checked{{ end }}>
+              </td>
+              <td><code>{{ .ID }}</code></td>
+              <td>{{ if .IsLoaded }}Yes{{ else }}No{{ end }}</td>
+              <td>{{ if .LoadedContextLength }}{{ commaInt .LoadedContextLength }}{{ else }}Not loaded{{ end }}</td>
+              <td>{{ if .MaxContextLength }}{{ commaInt .MaxContextLength }}{{ else }}Unknown{{ end }}</td>
+              <td>{{ if .Selected }}Current{{ else }}Available{{ end }}</td>
+            </tr>
+            {{ end }}
+          </tbody>
+        </table>
+      </div>
+      {{ else }}
+      <input type="text" name="llm_model" value="{{ .Config.LLMModel }}" placeholder="e.g. qwen/qwen3-4b">
+      <p class="field-hint">No models were discovered from the provider, so the model name must be entered manually.</p>
+      {{ end }}
+    </div>
+  </section>
+
+  <section class="panel settings-section">
+    <div class="section-head">
+      <h2>Transcription</h2>
+      <p>Speech-to-text and diarisation settings.</p>
+    </div>
+    <div class="field">
+      <label>Whisper server URL</label>
+      <input type="url" name="whisper_base_url" value="{{ .Config.WhisperBaseURL }}">
+    </div>
+    <div class="field">
+      <label>Whisper model</label>
+      <select name="whisper_model">
+        {{ range $m := (slice "tiny" "base" "small" "medium") }}
+        <option value="{{ $m }}" {{ if eq $.Config.WhisperModel $m }}selected{{ end }}>{{ $m }}</option>
+        {{ end }}
+      </select>
+    </div>
+    <div class="field">
+      <label>HuggingFace token (kept for compatibility)</label>
+      <input type="password" name="huggingface_token" value="" placeholder="{{ if .HuggingFaceTokenSet }}Leave blank to keep existing{{ else }}hf_…{{ end }}">
+      {{ if .HuggingFaceTokenSet }}
+      <p class="field-hint">Stored secret detected.</p>
+      {{ end }}
+    </div>
+  </section>
+
+  <section class="panel settings-section">
+    <div class="section-head">
+      <h2>Logging</h2>
+      <p>Useful when debugging the pipeline or integrations.</p>
+    </div>
+    <div class="field">
+      <label>Log level</label>
+      <select name="log_level">
+        {{ range $lvl := (slice "info" "debug" "verbose") }}
+        <option value="{{ $lvl }}" {{ if eq $.Config.LogLevel $lvl }}selected{{ end }}>{{ capitalize $lvl }}</option>
+        {{ end }}
+      </select>
+    </div>
+
+    <div class="field">
+      <label>Completed job retention (days)</label>
+      <input type="number" name="scratch_retention_days" value="{{ .Config.ScratchRetentionDays }}" min="1">
+    </div>
+  </section>
+
+  <section class="panel settings-section wide">
+    <div class="section-head">
+      <h2>Categories</h2>
+      <p>Map each type of meeting to a vault path and speaker defaults.</p>
+    </div>
+
+    <div class="category-list">
+      {{ if .Config.Categories }}
+      {{ range .Config.Categories }}
+      <article class="category-card">
+        <div class="category-copy">
+          <strong>{{ .Name }}</strong>
+          <p>{{ .VaultPath }}</p>
+          {{ if .FocusNotePath }}
+          <span>Focus: {{ .FocusNotePath }}</span>
+          {{ end }}
+        </div>
+        <form action="/categories/{{ .ID }}/speakers" method="post" class="speaker-form">
+          <input type="text" name="speaker_a" value="{{ .SpeakerA }}" placeholder="Speaker A">
+          <input type="text" name="speaker_b" value="{{ .SpeakerB }}" placeholder="Speaker B">
+          <button type="submit" class="btn-ghost">Save names</button>
+        </form>
+        <form action="/categories/{{ .ID }}/delete" method="post" class="category-delete">
+          <button type="submit" class="btn-ghost danger">Delete</button>
+        </form>
+      </article>
+      {{ end }}
+      {{ else }}
+      <div class="empty-state">
+        <strong>No categories configured.</strong>
+        <p>Add one below so uploads have a destination.</p>
+      </div>
+      {{ end }}
+    </div>
+  </section>
+
+  <section class="panel settings-section wide">
+    <div class="section-head">
+      <h2>Add category</h2>
+      <p>Create a new mapping for a meeting type.</p>
+    </div>
+    <div class="field-grid">
+      <div class="field">
+        <label>Name</label>
+        <input type="text" name="name" required placeholder="ADHD Coaching">
+      </div>
+      <div class="field">
+        <label>Vault path</label>
+        <input type="text" name="vault_path" required placeholder="Life/Mental Health/ADHD Coaching/Sessions">
+      </div>
+      <div class="field wide-field">
+        <label>Focus note path (optional)</label>
+        <input type="text" name="focus_note_path" placeholder="Life/Mental Health/ADHD Coaching/Coaching Focus.md">
+      </div>
+      <div class="field">
+        <label>Speaker A name</label>
+        <input type="text" name="speaker_a" value="You">
+      </div>
+      <div class="field">
+        <label>Speaker B name</label>
+        <input type="text" name="speaker_b" value="Coach">
+      </div>
+    </div>
+    <div class="form-actions">
+      <button type="submit">Add category</button>
+    </div>
+  </section>
+</form>
+{{ end }}

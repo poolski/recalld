@@ -1,164 +1,228 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Settings</h1>
+<section class="page-hero compact">
+  <div class="hero-copy">
+    <h1>Settings</h1>
+    <p>Keep the integrations, models, and note structure aligned with the way you work.</p>
+  </div>
+  {% if saved %}
+  <div class="notice success">Settings saved.</div>
+  {% endif %}
+</section>
 
-{% if saved %}
-<div class="alert success">Settings saved.</div>
-{% endif %}
+<form class="settings-layout" action="/settings/" method="post">
+  <section class="panel settings-section">
+    <div class="section-head">
+      <h2>Vault</h2>
+      <p>Where completed notes will land.</p>
+    </div>
+    <div class="field">
+      <label>Vault name</label>
+      <input type="text" name="vault_name" value="{{ cfg.vault_name }}" placeholder="Personal">
+    </div>
+  </section>
 
-<div class="card">
-<form action="/settings/" method="post">
-  <h2>Vault</h2>
-  <div class="field">
-    <label>Vault name</label>
-    <input type="text" name="vault_name" value="{{ cfg.vault_name }}" placeholder="Personal">
-  </div>
+  <section class="panel settings-section">
+    <div class="section-head">
+      <h2>Obsidian</h2>
+      <p>Talk to Obsidian through its local REST API.</p>
+    </div>
+    <div class="field">
+      <label>Local REST API URL</label>
+      <input type="url" name="obsidian_api_url" value="{{ cfg.obsidian_api_url }}">
+    </div>
+    <div class="field">
+      <label>API Key</label>
+      <input type="password" name="obsidian_api_key" value="" placeholder="{% if obsidian_api_key_set %}Leave blank to keep existing{% else %}Leave blank if not set{% endif %}">
+      {% if obsidian_api_key_set %}
+      <p class="field-hint">Stored secret detected.</p>
+      {% endif %}
+    </div>
+  </section>
 
-  <h2>Obsidian</h2>
-  <div class="field">
-    <label>Local REST API URL</label>
-    <input type="url" name="obsidian_api_url" value="{{ cfg.obsidian_api_url }}">
-  </div>
-  <div class="field">
-    <label>API Key</label>
-    <input type="password" name="obsidian_api_key" value="" placeholder="{% if obsidian_api_key_set %}Leave blank to keep existing{% else %}Leave blank if not set{% endif %}">
-    {% if obsidian_api_key_set %}
-    <p style="font-size:12px; color:var(--muted); margin-top:6px">Stored secret detected.</p>
-    {% endif %}
-  </div>
-
-  <h2>LLM</h2>
-  <div class="field">
-    <label>Endpoint URL</label>
-    <input type="url" name="llm_base_url" value="{{ cfg.llm_base_url }}">
-  </div>
-  <div class="field">
-    <label>Context headroom (0.0–1.0)</label>
-    <input type="number" name="llm_context_headroom" value="{{ cfg.llm_context_headroom }}" step="0.05" min="0.1" max="1.0">
-  </div>
-  <div class="field">
-    <label>Current model</label>
-    <div class="card" style="padding:14px 16px; margin-top:8px">
-      <div style="display:flex; gap:16px; flex-wrap:wrap; align-items:center">
-        <span><strong>Current model</strong>: {{ current_model.id if current_model else (cfg.llm_model or "Not selected") }}</span>
-        <span><strong>Loaded</strong>: {{ "Yes" if current_model and current_model.is_loaded else "No" }}</span>
-        <span><strong>Loaded context length</strong>: {{ "{:,}".format(current_model.loaded_context_length) if current_model and current_model.loaded_context_length else "Not loaded" }}</span>
-        <span><strong>Maximum context length</strong>: {{ "{:,}".format(current_model.max_context_length) if current_model and current_model.max_context_length else "Unknown" }} tokens</span>
-        <span><strong>Headroom budget</strong>: {{ "{:,}".format((detected_context_length * cfg.llm_context_headroom) | int) if detected_context_length else "Unknown" }} tokens</span>
+  <section class="panel settings-section wide">
+    <div class="section-head">
+      <h2>LLM</h2>
+      <p>Model selection and context headroom.</p>
+    </div>
+    <div class="field">
+      <label>Endpoint URL</label>
+      <input type="url" name="llm_base_url" value="{{ cfg.llm_base_url }}">
+    </div>
+    <div class="field">
+      <label>Context headroom (0.0–1.0)</label>
+      <input type="number" name="llm_context_headroom" value="{{ cfg.llm_context_headroom }}" step="0.05" min="0.1" max="1.0">
+    </div>
+    <div class="summary-cards">
+      <div class="summary-card">
+        <span>Current model</span>
+        <strong>{{ current_model.id if current_model else (cfg.llm_model or "Not selected") }}</strong>
+      </div>
+      <div class="summary-card">
+        <span>Loaded</span>
+        <strong>{{ "Yes" if current_model and current_model.is_loaded else "No" }}</strong>
+      </div>
+      <div class="summary-card">
+        <span>Loaded context length</span>
+        <strong>{{ "{:,}".format(current_model.loaded_context_length) if current_model and current_model.loaded_context_length else "Not loaded" }}</strong>
+      </div>
+      <div class="summary-card">
+        <span>Maximum context length</span>
+        <strong>{{ "{:,}".format(current_model.max_context_length) if current_model and current_model.max_context_length else "Unknown" }} tokens</strong>
+      </div>
+      <div class="summary-card">
+        <span>Headroom budget</span>
+        <strong>{{ "{:,}".format((detected_context_length * cfg.llm_context_headroom) | int) if detected_context_length else "Unknown" }} tokens</strong>
       </div>
     </div>
-  </div>
-  <div class="field">
-    <div style="display:flex; align-items:center; justify-content:space-between; gap:12px">
-      <label style="margin:0">Available models</label>
-      <button type="button" class="btn-ghost" onclick="window.location.href='/settings/'">Refresh models</button>
+
+    <div class="field">
+      <div class="field-row">
+        <label>Available models</label>
+        <button type="button" class="btn-ghost" onclick="window.location.href='/settings/'">Refresh models</button>
+      </div>
+      {% if model_refresh_unavailable %}
+      <p class="field-hint danger-text">
+        Could not refresh models from LM Studio. Keeping selected model: <code>{{ cfg.llm_model }}</code>.
+      </p>
+      {% endif %}
+      {% if provider_models %}
+      <div class="models-table-wrap">
+        <table class="models-table">
+          <thead>
+            <tr>
+              <th>Use</th>
+              <th>Model</th>
+              <th>Loaded</th>
+              <th>Loaded context length</th>
+              <th>Maximum context length</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for model in provider_models %}
+            <tr>
+              <td>
+                <input type="radio" name="llm_model" value="{{ model.id }}" {% if model.selected %}checked{% endif %}>
+              </td>
+              <td><code>{{ model.id }}</code></td>
+              <td>{% if model.is_loaded %}Yes{% else %}No{% endif %}</td>
+              <td>{{ "{:,}".format(model.loaded_context_length) if model.loaded_context_length else "Not loaded" }}</td>
+              <td>{{ "{:,}".format(model.max_context_length) if model.max_context_length else "Unknown" }}</td>
+              <td>{% if model.selected %}Current{% else %}Available{% endif %}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <input type="text" name="llm_model" value="{{ cfg.llm_model }}" placeholder="e.g. qwen/qwen3-4b">
+      <p class="field-hint">No models were discovered from the provider, so the model name must be entered manually.</p>
+      {% endif %}
     </div>
-    {% if model_refresh_unavailable %}
-    <p style="font-size:13px; color:var(--red); margin-top:8px">
-      Could not refresh models from LM Studio. Keeping selected model: <code>{{ cfg.llm_model }}</code>.
-    </p>
-    {% endif %}
-    {% if provider_models %}
-    <div style="overflow-x:auto">
-      <table style="width:100%; border-collapse:collapse; margin-top:8px">
-        <thead>
-          <tr style="text-align:left; border-bottom:1px solid var(--border)">
-            <th style="padding:10px 12px">Use</th>
-            <th style="padding:10px 12px">Model</th>
-            <th style="padding:10px 12px">Loaded</th>
-            <th style="padding:10px 12px">Loaded context length</th>
-            <th style="padding:10px 12px">Maximum context length</th>
-            <th style="padding:10px 12px">Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for model in provider_models %}
-          <tr style="border-bottom:1px solid var(--border)">
-            <td style="padding:12px">
-              <input type="radio" name="llm_model" value="{{ model.id }}" {% if model.selected %}checked{% endif %}>
-            </td>
-            <td style="padding:12px"><code>{{ model.id }}</code></td>
-            <td style="padding:12px">{% if model.is_loaded %}Yes{% else %}No{% endif %}</td>
-            <td style="padding:12px">{{ "{:,}".format(model.loaded_context_length) if model.loaded_context_length else "Not loaded" }}</td>
-            <td style="padding:12px">{{ "{:,}".format(model.max_context_length) if model.max_context_length else "Unknown" }}</td>
-            <td style="padding:12px">{% if model.selected %}Current{% else %}Available{% endif %}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+  </section>
+
+  <section class="panel settings-section">
+    <div class="section-head">
+      <h2>Transcription</h2>
+      <p>Speech-to-text and diarisation settings.</p>
     </div>
-    {% else %}
-    <input type="text" name="llm_model" value="{{ cfg.llm_model }}" placeholder="e.g. qwen/qwen3-4b">
-    <p style="font-size:13px; color:var(--muted); margin-top:8px">
-      No models were discovered from the provider, so the model name must be entered manually.
-    </p>
-    {% endif %}
-  </div>
+    <div class="field">
+      <label>Whisper model</label>
+      <select name="whisper_model">
+        {% for m in ["tiny", "base", "small", "medium"] %}
+        <option value="{{ m }}" {% if cfg.whisper_model == m %}selected{% endif %}>{{ m }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label>HuggingFace token (required for pyannote)</label>
+      <input type="password" name="huggingface_token" value="" placeholder="{% if huggingface_token_set %}Leave blank to keep existing{% else %}hf_…{% endif %}">
+      {% if huggingface_token_set %}
+      <p class="field-hint">Stored secret detected.</p>
+      {% endif %}
+    </div>
+  </section>
 
-  <h2>Transcription</h2>
-  <div class="field">
-    <label>Whisper model</label>
-    <select name="whisper_model">
-      {% for m in ["tiny", "base", "small", "medium"] %}
-      <option value="{{ m }}" {% if cfg.whisper_model == m %}selected{% endif %}>{{ m }}</option>
+  <section class="panel settings-section">
+    <div class="section-head">
+      <h2>Logging</h2>
+      <p>Useful when debugging the pipeline or integrations.</p>
+    </div>
+    <div class="field">
+      <label>Log level</label>
+      <select name="log_level">
+        {% for lvl in ["info", "debug", "verbose"] %}
+        <option value="{{ lvl }}" {% if cfg.log_level == lvl %}selected{% endif %}>{{ lvl | capitalize }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="field">
+      <label>Completed job retention (days)</label>
+      <input type="number" name="scratch_retention_days" value="{{ cfg.scratch_retention_days }}" min="1">
+    </div>
+  </section>
+
+  <section class="panel settings-section wide">
+    <div class="section-head">
+      <h2>Categories</h2>
+      <p>Map each type of meeting to a vault path and speaker defaults.</p>
+    </div>
+
+    <div class="category-list">
+      {% for cat in cfg.categories %}
+      <article class="category-card">
+        <div class="category-copy">
+          <strong>{{ cat.name }}</strong>
+          <p>{{ cat.vault_path }}</p>
+          {% if cat.focus_note_path %}
+          <span>Focus: {{ cat.focus_note_path }}</span>
+          {% endif %}
+        </div>
+        <form action="/categories/{{ cat.id }}/speakers" method="post" class="speaker-form">
+          <input type="text" name="speaker_a" value="{{ cat.speaker_a }}" placeholder="Speaker A">
+          <input type="text" name="speaker_b" value="{{ cat.speaker_b }}" placeholder="Speaker B">
+          <button type="submit" class="btn-ghost">Save names</button>
+        </form>
+        <form action="/categories/{{ cat.id }}/delete" method="post" class="category-delete">
+          <button type="submit" class="btn-ghost danger">Delete</button>
+        </form>
+      </article>
       {% endfor %}
-    </select>
-  </div>
-  <div class="field">
-    <label>HuggingFace token (required for pyannote)</label>
-    <input type="password" name="huggingface_token" value="" placeholder="{% if huggingface_token_set %}Leave blank to keep existing{% else %}hf_…{% endif %}">
-    {% if huggingface_token_set %}
-    <p style="font-size:12px; color:var(--muted); margin-top:6px">Stored secret detected.</p>
-    {% endif %}
-  </div>
+    </div>
+  </section>
 
-  <h2>Logging</h2>
-  <div class="field">
-    <label>Log level</label>
-    <select name="log_level">
-      {% for lvl in ["info", "debug", "verbose"] %}
-      <option value="{{ lvl }}" {% if cfg.log_level == lvl %}selected{% endif %}>{{ lvl | capitalize }}</option>
-      {% endfor %}
-    </select>
-  </div>
-
-  <div class="field">
-    <label>Completed job retention (days)</label>
-    <input type="number" name="scratch_retention_days" value="{{ cfg.scratch_retention_days }}" min="1">
-  </div>
-
-  <button type="submit">Save settings</button>
-</form>
-</div>
-
-<h2>Categories</h2>
-{% for cat in cfg.categories %}
-<div style="border:1px solid var(--border); border-radius:8px; padding:16px; margin-bottom:12px">
-  <strong>{{ cat.name }}</strong>
-  <p style="font-size:13px; color:var(--muted); margin:4px 0">{{ cat.vault_path }}</p>
-  {% if cat.focus_note_path %}
-  <p style="font-size:12px; color:var(--muted)">Focus: {{ cat.focus_note_path }}</p>
-  {% endif %}
-  <form action="/categories/{{ cat.id }}/speakers" method="post" style="display:flex; gap:8px; margin-top:10px">
-    <input type="text" name="speaker_a" value="{{ cat.speaker_a }}" style="width:140px">
-    <input type="text" name="speaker_b" value="{{ cat.speaker_b }}" style="width:140px">
-    <button type="submit" class="btn-ghost" style="padding:6px 12px;font-size:13px">Save names</button>
-  </form>
-  <form action="/categories/{{ cat.id }}/delete" method="post" style="margin-top:8px">
-    <button type="submit" class="btn-ghost" style="padding:4px 10px;font-size:12px;color:var(--red);border-color:var(--red)">Delete</button>
-  </form>
-</div>
-{% endfor %}
-
-<h2>Add category</h2>
-<form action="/categories/" method="post">
-  <div class="field"><label>Name</label><input type="text" name="name" required placeholder="ADHD Coaching"></div>
-  <div class="field"><label>Vault path</label><input type="text" name="vault_path" required placeholder="Life/Mental Health/ADHD Coaching/Sessions"></div>
-  <div class="field"><label>Focus note path (optional)</label><input type="text" name="focus_note_path" placeholder="Life/Mental Health/ADHD Coaching/Coaching Focus.md"></div>
-  <div style="display:flex; gap:8px">
-    <div class="field" style="flex:1"><label>Speaker A name</label><input type="text" name="speaker_a" value="You"></div>
-    <div class="field" style="flex:1"><label>Speaker B name</label><input type="text" name="speaker_b" value="Coach"></div>
-  </div>
-  <button type="submit">Add category</button>
+  <section class="panel settings-section wide">
+    <div class="section-head">
+      <h2>Add category</h2>
+      <p>Create a new mapping for a meeting type.</p>
+    </div>
+    <div class="field-grid">
+      <div class="field">
+        <label>Name</label>
+        <input type="text" name="name" required placeholder="ADHD Coaching">
+      </div>
+      <div class="field">
+        <label>Vault path</label>
+        <input type="text" name="vault_path" required placeholder="Life/Mental Health/ADHD Coaching/Sessions">
+      </div>
+      <div class="field wide-field">
+        <label>Focus note path (optional)</label>
+        <input type="text" name="focus_note_path" placeholder="Life/Mental Health/ADHD Coaching/Coaching Focus.md">
+      </div>
+      <div class="field">
+        <label>Speaker A name</label>
+        <input type="text" name="speaker_a" value="You">
+      </div>
+      <div class="field">
+        <label>Speaker B name</label>
+        <input type="text" name="speaker_b" value="Coach">
+      </div>
+    </div>
+    <div class="form-actions">
+      <button type="submit">Add category</button>
+    </div>
+  </section>
 </form>
 {% endblock %}

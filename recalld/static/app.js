@@ -2,9 +2,8 @@
 document.addEventListener("DOMContentLoaded", () => {
   const zone = document.getElementById("drop-zone");
   const fileInput = document.getElementById("file-input");
-  const form = document.getElementById("upload-form");
-
-  if (!zone) return;
+  if (!zone || !fileInput) return;
+  const filenameLabel = zone.querySelector("[data-drop-filename]");
 
   zone.addEventListener("click", () => fileInput.click());
 
@@ -30,8 +29,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   function updateZoneLabel(name) {
-    const p = zone.querySelector("p");
-    if (p) p.textContent = name;
+    if (filenameLabel) filenameLabel.textContent = name;
   }
 });
 
@@ -204,6 +202,7 @@ async function connectSSE(jobId, initialStages = {}) {
             can_confirm_vault, can_confirm_speakers, can_swap_speakers, vault_preview, filename } = event;
 
     updateStage(stage, status, message);
+    syncJobSummary(stage, status);
 
     if (preview) showPreview(preview);
     if (topic_count) showChunkInfo(topic_count, strategy);
@@ -227,6 +226,7 @@ async function hydrateJobState(jobId) {
     if (!resp.ok) return;
     const state = await resp.json();
     applyStageStatuses(state.stage_statuses || {});
+    syncJobSummary(state.current_stage, state.status);
     if (state.preview) showPreview(state.preview);
     if (state.topic_count) showChunkInfo(state.topic_count, state.strategy);
     if (state.summary !== undefined && state.summary !== null) showPartialSummary(state.summary);
@@ -237,6 +237,17 @@ async function hydrateJobState(jobId) {
     if (state.can_confirm_speakers || state.can_swap_speakers) showSpeakerConfirm("align");
   } catch (_) {
     // Fall back to template-provided state if the refresh request fails.
+  }
+}
+
+function syncJobSummary(currentStage, status) {
+  const stageEl = document.getElementById("processing-current-stage");
+  const statusEl = document.getElementById("processing-status");
+  if (stageEl && currentStage) {
+    stageEl.textContent = currentStage.replaceAll("_", " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+  if (statusEl && status) {
+    statusEl.textContent = status.replaceAll("_", " ").replace(/\b\w/g, (c) => c.toUpperCase());
   }
 }
 
@@ -259,7 +270,7 @@ function updateStage(stage, status, message) {
     pill.className = `stage-pill status-${status}`;
   }
   if (status !== "awaiting_confirmation") disableStageConfirmation(stage);
-  if (msg && message) msg.textContent = message;
+  if (msg) msg.textContent = message || "";
 
   if (header && (status === "running" || status === "failed" || status === "awaiting_confirmation")) {
     setStageExpanded(stage, true);
@@ -267,6 +278,16 @@ function updateStage(stage, status, message) {
 }
 
 function clearStageResults(stage) {
+  const stageEl = document.getElementById(`stage-${stage}`);
+  if (stageEl) {
+    const msg = stageEl.querySelector(".stage-msg");
+    if (msg) msg.textContent = "";
+  }
+  const logEl = document.getElementById(`stage-log-${stage}`);
+  if (logEl) {
+    logEl.textContent = "";
+  }
+
   if (stage === "postprocess") {
     const summaryEl = document.getElementById("result-summary");
     const focusEl = document.getElementById("result-focus");
@@ -291,6 +312,10 @@ function clearStageResults(stage) {
       previewEl.innerHTML = "";
       previewEl.style.display = "none";
     }
+  }
+  if (stage === "diarise") {
+    const skipBtn = document.getElementById("diarise-skip-btn");
+    if (skipBtn) skipBtn.style.display = "none";
   }
 }
 

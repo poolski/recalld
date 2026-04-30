@@ -1,0 +1,20 @@
+{{ define "job_row" }}
+<li class="job-item">
+  <div class="job-meta">
+    <span class="job-filename">{{ .OriginalFilename }}</span>
+    <span class="job-stage">{{ .CurrentStage }}</span>
+  </div>
+  <div class="job-actions">
+    <button type="button" class="btn-ghost row-restart-btn"
+      hx-post="/jobs/{{ .ID }}/restart-from/{{ .CurrentStage }}" hx-swap="none"
+      title="Restart from {{ .CurrentStage }}">
+      Restart
+    </button>
+    <a href="/jobs/{{ .ID }}" class="btn-ghost">View details</a>
+    <button class="btn-ghost danger"
+      hx-get="/jobs/{{ .ID }}/confirm-delete"
+      hx-target="closest li"
+      hx-swap="outerHTML">Remove</button>
+  </div>
+</li>
+{{ end }}

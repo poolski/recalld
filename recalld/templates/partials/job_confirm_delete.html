@@ -1,11 +1,15 @@
 <li class="job-item">
-  <span class="filename">Remove <strong>{{ job.original_filename }}</strong>?</span>
-  <button class="btn-ghost" style="padding:4px 12px;font-size:12px;color:var(--red);border-color:var(--red)"
-    hx-delete="/jobs/{{ job.id }}"
-    hx-target="closest li"
-    hx-swap="delete">Delete</button>
-  <button class="btn-ghost" style="padding:4px 12px;font-size:12px"
-    hx-get="/jobs/{{ job.id }}/row"
-    hx-target="closest li"
-    hx-swap="outerHTML">Cancel</button>
+  <div class="job-meta">
+    <span class="job-filename">Remove <strong>{{ job.original_filename }}</strong>?</span>
+  </div>
+  <div class="job-actions">
+    <button class="btn-ghost danger"
+      hx-delete="/jobs/{{ job.id }}"
+      hx-target="closest li"
+      hx-swap="delete">Delete</button>
+    <button class="btn-ghost"
+      hx-get="/jobs/{{ job.id }}/row"
+      hx-target="closest li"
+      hx-swap="outerHTML">Cancel</button>
+  </div>
 </li>
