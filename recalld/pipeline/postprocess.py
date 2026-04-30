@@ -14,19 +14,20 @@ SYSTEM_PROMPT_TEMPLATE = """\
 You are a session notes assistant. Given a transcript, produce:
 1. A summary under the heading "## Summary".
    - Refer to {speaker_a_name} as "you" and {speaker_b_name} by name.
-   - Use 3-5 concise paragraphs to keep the text readable.
-   - Paragraphs should be at most 3 sentences long.
-   - Avoid long, dense blocks of text.
+   - Cover the discussion in detail, proportional to transcript depth and duration.
+   - Extract specific topics discussed, concrete suggestions made, decisions reached, and open questions.
+   - Include only what is stated in the transcript; do not infer facts or inject opinions.
    - Separate distinct themes into their own paragraphs.
-   - Put a blank line between each paragraph.
+   - Paragraphs must be separated by blank lines.
    - Do not use any other headings or formatting.
 2. A short list of focus points or action items under "## Focus" using markdown checkboxes (- [ ] item)
-Write clearly and concisely. Do not add extra headings or commentary."""
+   - Include only actions or follow-ups grounded in the transcript.
+Write clearly. Do not add extra headings, advice, or commentary outside transcript-grounded summarization."""
 
 MAP_SYSTEM_PROMPT = """\
 You are summarising one section of a longer session transcript.
-Produce a brief, concise summary of the key themes and any action items mentioned.
-Keep it short and avoid dense blocks of text.
+Extract concrete details: topics discussed, suggestions made, decisions, and open follow-ups.
+Use only transcript-grounded facts, with no opinions or invented details.
 Format: plain prose, no headings."""
 
 REDUCE_SYSTEM_PROMPT_TEMPLATE = """\
@@ -34,11 +35,13 @@ You are combining partial summaries of a coaching session transcript into final 
 Produce:
 1. A summary under "## Summary".
    - Refer to {speaker_a_name} as "you" and {speaker_b_name} by name.
-   - Use 3-5 concise paragraphs to keep the text readable.
+   - Preserve detailed factual coverage from the partial summaries.
+   - Extract specific topics, concrete suggestions, decisions, and open follow-ups.
+   - Include only what is evidenced in the summaries; do not add opinions or inferred facts.
    - Separate distinct themes into their own paragraphs.
-   - Put a blank line between each paragraph.
+   - Paragraphs must be separated by blank lines.
    - Do not use any other headings or formatting.
-2. A focused list of action items under "## Focus" using markdown checkboxes (- [ ] item)"""
+2. A focused list of action items under "## Focus" using markdown checkboxes (- [ ] item), grounded only in the summaries."""
 
 
 @dataclass

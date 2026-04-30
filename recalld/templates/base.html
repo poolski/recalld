@@ -13,7 +13,11 @@
 
 <header class="app-header">
   <div class="header-row header-top">
-    <span class="brand">recalld</span>
+    <a class="brand" href="/">
+      <img class="logo-light" src="/static/logos/logo-memory-node-v1.svg" alt="" aria-hidden="true">
+      <img class="logo-dark" src="/static/logos/logo-memory-node-dark-v1.svg" alt="" aria-hidden="true">
+      <span>recalld</span>
+    </a>
     <div id="status-bar-indicators"
          hx-get="/settings/status"
          hx-trigger="load, every 30s"
@@ -23,7 +27,8 @@
   </div>
   <div class="header-row header-nav">
     <nav>
-      <a href="/" {% if request.url.path == "/" %}class="active"{% endif %}>Upload</a>
+      <a href="/" {% if request.url.path == "/" and active_tab != "jobs" %}class="active"{% endif %}>New recording</a>
+      <a href="/?tab=jobs" {% if request.url.path == "/" and active_tab == "jobs" %}class="active"{% endif %}>All jobs</a>
       <a href="/settings/" {% if request.url.path.startswith("/settings") %}class="active"{% endif %}>Settings</a>
     </nav>
   </div>

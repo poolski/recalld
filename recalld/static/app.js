@@ -201,7 +201,8 @@ async function connectSSE(jobId, initialStages = {}) {
     const event = JSON.parse(e.data);
     const { stage, status, message, preview, topic_count, strategy,
             obsidian_uri, summary, focus_points, can_skip, can_write_transcript_only,
-            can_confirm_vault, can_confirm_speakers, can_swap_speakers, vault_preview, filename } = event;
+            can_confirm_vault, can_confirm_speakers, can_swap_speakers, vault_preview, filename,
+            vault_conflict_path, can_overwrite_vault_note, can_append_vault_note } = event;
 
     updateStage(stage, status, message);
 
@@ -212,6 +213,7 @@ async function connectSSE(jobId, initialStages = {}) {
     if (can_skip) showDiariseSkip(stage);
     if (can_write_transcript_only) showPostprocessFallback(stage);
     if (can_confirm_vault) showVaultConfirm(stage, filename);
+    if (vault_conflict_path || can_overwrite_vault_note || can_append_vault_note) showVaultConflict(vault_conflict_path);
     if (vault_preview) showVaultPreview(vault_preview);
     if (can_confirm_speakers || can_swap_speakers) showSpeakerConfirm(stage);
 
@@ -233,6 +235,7 @@ async function hydrateJobState(jobId) {
     if (state.focus_points || state.obsidian_uri) showResults(state.obsidian_uri, state.summary || "", state.focus_points || []);
     if (state.error) updateStage(state.current_stage, state.stage_statuses[state.current_stage], state.error);
     if (state.can_confirm_vault) showVaultConfirm("vault", state.filename);
+    if (state.vault_conflict_path || state.can_overwrite_vault_note || state.can_append_vault_note) showVaultConflict(state.vault_conflict_path);
     if (state.vault_preview) showVaultPreview(state.vault_preview);
     if (state.can_confirm_speakers || state.can_swap_speakers) showSpeakerConfirm("align");
   } catch (_) {
@@ -259,7 +262,7 @@ function updateStage(stage, status, message) {
     pill.className = `stage-pill status-${status}`;
   }
   if (status !== "awaiting_confirmation") disableStageConfirmation(stage);
-  if (msg && message) msg.textContent = message;
+  if (msg) msg.textContent = "";
 
   if (header && (status === "running" || status === "failed" || status === "awaiting_confirmation")) {
     setStageExpanded(stage, true);
@@ -366,6 +369,14 @@ function showVaultConfirm(stage, filename) {
   setStageExpanded("vault", true);
 }
 
+function showVaultConflict(path) {
+  const box = document.getElementById("vault-conflict-box");
+  const pathEl = document.getElementById("vault-conflict-path");
+  if (pathEl && path) pathEl.textContent = path;
+  if (box) box.style.display = "block";
+  setStageExpanded("vault", true);
+}
+
 function showVaultPreview(text) {
   const el = document.getElementById("vault-preview");
   if (!el || !text) return;
@@ -406,7 +417,9 @@ function disableStageConfirmation(stage) {
   if (stage === "vault") {
     const controls = document.getElementById("vault-confirm-controls");
     const el = document.getElementById("vault-confirm-btn");
+    const conflict = document.getElementById("vault-conflict-box");
     if (controls) controls.style.display = "none";
+    if (conflict) conflict.style.display = "none";
     if (el) {
       el.style.display = "none";
       el.disabled = true;

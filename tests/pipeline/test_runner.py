@@ -41,6 +41,7 @@ async def test_pipeline_waits_for_vault_confirmation(tmp_path, monkeypatch):
 
     with patch("recalld.pipeline.runner.ensure_loaded_context_length", AsyncMock(return_value=1000)), \
          patch("recalld.pipeline.runner.postprocess", AsyncMock(return_value=result)), \
+         patch("recalld.pipeline.runner._infer_note_title_with_llm", AsyncMock(return_value="2026-04-29 Project Starfish Meeting.md")), \
          patch("recalld.pipeline.runner.bus.publish") as mock_publish, \
          patch("recalld.pipeline.runner.VaultWriter") as MockWriter:
         await run_pipeline(job, scratch / "session.m4a", cfg)
@@ -56,6 +57,7 @@ async def test_pipeline_waits_for_vault_confirmation(tmp_path, monkeypatch):
     assert reloaded.stage_statuses["postprocess"] == "done"
     assert reloaded.stage_statuses["vault"] == "awaiting_confirmation"
     assert reloaded.postprocess_path is not None
+    assert reloaded.filename == "2026-04-29 Project Starfish Meeting.md"
 
 
 @pytest.mark.asyncio
@@ -155,3 +157,39 @@ async def test_pipeline_maps_diariser_speakers_in_encounter_order(tmp_path, monk
     aligned = json.loads((scratch / "aligned.json").read_text())
     assert aligned[0]["speaker"] == "You"
     assert aligned[1]["speaker"] == "Coach"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_falls_back_to_default_name_when_inference_fails(tmp_path, monkeypatch):
+    monkeypatch.setattr("recalld.pipeline.runner.DEFAULT_SCRATCH_ROOT", tmp_path)
+
+    job = create_job(category_id="cat-1", original_filename="session.m4a", scratch_root=tmp_path)
+    scratch = tmp_path / job.id
+    aligned_path = scratch / "aligned.json"
+    aligned_path.write_text(json.dumps([
+        LabelledTurn(speaker="You", start=0.0, end=1.0, text="Hello").__dict__,
+    ]))
+    job.aligned_path = str(aligned_path)
+    job.current_stage = JobStage.postprocess
+    save_job(job, scratch_root=tmp_path)
+
+    cfg = Config(
+        llm_model="test-model",
+        categories=[Category(id="cat-1", name="Coaching", vault_path="Life/Sessions")],
+    )
+    result = PostProcessResult(
+        summary="Summary",
+        focus_points=["Follow up"],
+        raw_response="",
+        strategy="single",
+        topic_count=1,
+    )
+
+    with patch("recalld.pipeline.runner.ensure_loaded_context_length", AsyncMock(return_value=1000)), \
+         patch("recalld.pipeline.runner.postprocess", AsyncMock(return_value=result)), \
+         patch("recalld.pipeline.runner._infer_note_title_with_llm", AsyncMock(side_effect=Exception("boom"))), \
+         patch("recalld.pipeline.runner.VaultWriter"):
+        await run_pipeline(job, scratch / "session.m4a", cfg)
+
+    reloaded = load_job(job.id, scratch_root=tmp_path)
+    assert reloaded.filename.endswith("Coaching.md")

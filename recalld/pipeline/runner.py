@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 
 from recalld.config import Config, load_config
 from recalld.events import bus
 from recalld.jobs import Job, JobStage, JobStatus, save_job, DEFAULT_SCRATCH_ROOT
+from recalld.llm.client import LLMClient
 from recalld.llm.context import ensure_loaded_context_length, token_budget
 from recalld.pipeline.align import align
 from recalld.pipeline.diarise import diarise, DiariseError
@@ -82,6 +84,38 @@ def _build_speaker_map(raw_turns, speaker_a: str, speaker_b: str) -> dict[str, s
     if len(speakers) > 1:
         speaker_map[speakers[1]] = speaker_b
     return speaker_map
+
+
+def _normalize_note_title(title: str, session_date) -> str:
+    cleaned = re.sub(r"\s+", " ", (title or "").strip())
+    cleaned = cleaned.replace("/", "-").replace("\\", "-")
+    if not cleaned:
+        return ""
+    if cleaned.lower().endswith(".md"):
+        cleaned = cleaned[:-3].rstrip()
+    if not cleaned.startswith(session_date.isoformat()):
+        cleaned = f"{session_date.isoformat()} {cleaned}".strip()
+    return f"{cleaned}.md"
+
+
+async def _infer_note_title_with_llm(job: Job, cfg: Config, category_name: str, vault_path: str, labelled) -> str:
+    session_date = job.created_at.date()
+    transcript_excerpt = "\n".join(f"{t.speaker}: {t.text}" for t in labelled[:40])
+    system = (
+        "You create concise Obsidian note titles for conversation recordings. "
+        "Return only one line in this exact format: YYYY-MM-DD Title. "
+        "Do not include markdown, quotes, filename extension, slashes, or extra commentary."
+    )
+    user = (
+        f"Session date: {session_date.isoformat()}\n"
+        f"Category: {category_name}\n"
+        f"Vault path: {vault_path}\n"
+        f"Transcript excerpt:\n{transcript_excerpt}\n\n"
+        "Generate a specific but concise title."
+    )
+    client = LLMClient(base_url=cfg.llm_base_url, model=cfg.llm_model)
+    raw = await client.complete(system, user)
+    return _normalize_note_title(raw, session_date)
 
 
 async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
@@ -242,8 +276,15 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
             job.chunk_strategy = result.strategy
 
             if not job.filename and cat:
-                session_date = job.created_at.date()
-                job.filename = f"{session_date.isoformat()} {cat.name}.md"
+                try:
+                    inferred = await _infer_note_title_with_llm(job, cfg, cat.name, cat.vault_path, labelled)
+                except Exception:
+                    inferred = ""
+                if inferred:
+                    job.filename = inferred
+                else:
+                    session_date = job.created_at.date()
+                    job.filename = f"{session_date.isoformat()} {cat.name}.md"
 
             _set_stage_status(job, "postprocess", "done")
             job.current_stage = JobStage.vault
@@ -320,7 +361,11 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
             )
 
             try:
-                await writer.write_note(cat.vault_path, filename, note_content)
+                mode = (job.vault_write_mode or "overwrite").lower()
+                if mode == "append":
+                    await writer.append_note(cat.vault_path, filename, "\n\n" + note_content)
+                else:
+                    await writer.write_note(cat.vault_path, filename, note_content)
             except Exception as e:
                 job.status = JobStatus.failed
                 job.error = str(e)
@@ -343,6 +388,8 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
 
             job.status = JobStatus.complete
             _set_stage_status(job, "vault", "done")
+            job.vault_write_mode = None
+            job.vault_conflict_path = None
             _save(job)
             _emit(job, "vault", "done",
                   obsidian_uri=f"/jobs/{job.id}/open-in-obsidian",

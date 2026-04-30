@@ -109,6 +109,20 @@ def test_job_detail_shows_rerun_buttons_for_failed_job(scratch, client):
     assert "row-restart-btn" in resp.text
 
 
+def test_job_detail_does_not_render_error_message_in_stage_header(scratch, client):
+    job = create_job(category_id="test", original_filename="audio.m4a", scratch_root=scratch)
+    job.current_stage = JobStage.align
+    job.status = JobStatus.failed
+    job.stage_statuses["align"] = "failed"
+    job.error = "WordSegment.__init__() got an unexpected keyword argument 'segment'"
+    save_job(job, scratch_root=scratch)
+
+    resp = client.get(f"/jobs/{job.id}")
+
+    assert resp.status_code == 200
+    assert job.error not in resp.text
+
+
 def test_confirm_vault_write_updates_job_and_resumes_pipeline(scratch, client, monkeypatch):
     job = create_job(category_id="test", original_filename="audio.m4a", scratch_root=scratch)
     (scratch / job.id / job.original_filename).write_bytes(b"audio")
@@ -129,6 +143,11 @@ def test_confirm_vault_write_updates_job_and_resumes_pipeline(scratch, client, m
 
     monkeypatch.setattr("recalld.routers.jobs.run_pipeline", fake_run_pipeline)
     monkeypatch.setattr("asyncio.create_task", fake_create_task)
+    config = Config(categories=[Category(id="test", name="Coaching", vault_path="Life/Sessions")])
+    monkeypatch.setattr("recalld.config.load_config", lambda path=None: config)
+    async def fake_exists(self, vault_path):
+        return False
+    monkeypatch.setattr("recalld.pipeline.vault.VaultWriter.note_exists", fake_exists)
 
     resp = client.post(f"/jobs/{job.id}/confirm-vault-write")
 
@@ -136,6 +155,86 @@ def test_confirm_vault_write_updates_job_and_resumes_pipeline(scratch, client, m
     updated = load_job(job.id, scratch_root=scratch)
     assert updated.status == JobStatus.running
     assert updated.stage_statuses["vault"] == "pending"
+    assert "coro" in scheduled
+
+
+def test_confirm_vault_write_prompts_overwrite_or_append_when_note_exists(scratch, client, monkeypatch):
+    job = create_job(category_id="test", original_filename="audio.m4a", scratch_root=scratch)
+    (scratch / job.id / job.original_filename).write_bytes(b"audio")
+    job.current_stage = JobStage.vault
+    job.status = JobStatus.pending
+    job.filename = "2025-04-29 Coaching.md"
+    job.stage_statuses["vault"] = "awaiting_confirmation"
+    save_job(job, scratch_root=scratch)
+
+    config = Config(categories=[Category(id="test", name="Coaching", vault_path="Life/Sessions")])
+    monkeypatch.setattr("recalld.config.load_config", lambda path=None: config)
+
+    async def fake_exists(self, vault_path):
+        return True
+
+    monkeypatch.setattr("recalld.pipeline.vault.VaultWriter.note_exists", fake_exists)
+
+    scheduled = {}
+
+    def fake_create_task(coro):
+        scheduled["coro"] = coro
+        coro.close()
+        return None
+
+    monkeypatch.setattr("asyncio.create_task", fake_create_task)
+
+    resp = client.post(
+        f"/jobs/{job.id}/confirm-vault-write",
+        data={"filename": "2025-04-29 Coaching.md"},
+    )
+
+    assert resp.status_code == 200
+    updated = load_job(job.id, scratch_root=scratch)
+    assert updated.status == JobStatus.pending
+    assert updated.stage_statuses["vault"] == "awaiting_confirmation"
+    assert updated.vault_conflict_path == "Life/Sessions/2025-04-29 Coaching.md"
+    assert "Overwrite existing note" in resp.text
+    assert "Append to existing note" in resp.text
+    assert "coro" not in scheduled
+
+
+def test_confirm_vault_write_with_append_mode_resumes_pipeline(scratch, client, monkeypatch):
+    job = create_job(category_id="test", original_filename="audio.m4a", scratch_root=scratch)
+    (scratch / job.id / job.original_filename).write_bytes(b"audio")
+    job.current_stage = JobStage.vault
+    job.status = JobStatus.pending
+    job.filename = "2025-04-29 Coaching.md"
+    job.stage_statuses["vault"] = "awaiting_confirmation"
+    save_job(job, scratch_root=scratch)
+
+    config = Config(categories=[Category(id="test", name="Coaching", vault_path="Life/Sessions")])
+    monkeypatch.setattr("recalld.config.load_config", lambda path=None: config)
+
+    scheduled = {}
+
+    async def fake_run_pipeline(job_arg, source_arg, cfg_arg):
+        return None
+
+    def fake_create_task(coro):
+        scheduled["coro"] = coro
+        coro.close()
+        return None
+
+    monkeypatch.setattr("recalld.routers.jobs.run_pipeline", fake_run_pipeline)
+    monkeypatch.setattr("asyncio.create_task", fake_create_task)
+
+    resp = client.post(
+        f"/jobs/{job.id}/confirm-vault-write",
+        data={"filename": "2025-04-29 Coaching.md", "write_mode": "append"},
+    )
+
+    assert resp.status_code == 200
+    updated = load_job(job.id, scratch_root=scratch)
+    assert updated.status == JobStatus.running
+    assert updated.stage_statuses["vault"] == "pending"
+    assert updated.vault_write_mode == "append"
+    assert updated.vault_conflict_path is None
     assert "coro" in scheduled
 
 

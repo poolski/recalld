@@ -98,7 +98,7 @@ async def test_postprocess_uses_single_request_when_transcript_fits_provider_bud
             turns=turns,
             llm_base_url="http://localhost:1234/v1",
             llm_model="qwen",
-            token_budget=1000,
+            token_budget=2000,
         )
 
     assert call_count == 1
@@ -130,7 +130,7 @@ async def test_postprocess_includes_configured_speaker_names_in_system_prompt():
     assert "Alex" in captured["system"]
     assert "Jordan" in captured["system"]
     assert "Refer to Alex as \"you\"" in captured["system"]
-    assert "blank line between each paragraph" in captured["system"]
+    assert "Paragraphs must be separated by blank lines." in captured["system"]
 
 
 @pytest.mark.asyncio
@@ -197,3 +197,19 @@ def test_parse_focus_points_from_markdown():
     md = "## Focus\n\n- [ ] Do thing one\n- [ ] Do thing two\n\nExtra text"
     points = parse_focus_points(md)
     assert points == ["Do thing one", "Do thing two"]
+
+
+def test_postprocess_prompts_require_detailed_transcript_grounded_summary():
+    from recalld.pipeline.postprocess import SYSTEM_PROMPT_TEMPLATE, MAP_SYSTEM_PROMPT, REDUCE_SYSTEM_PROMPT_TEMPLATE
+
+    assert "Cover the discussion in detail, proportional to transcript depth and duration." in SYSTEM_PROMPT_TEMPLATE
+    assert "Extract specific topics discussed, concrete suggestions made, decisions reached, and open questions." in SYSTEM_PROMPT_TEMPLATE
+    assert "Include only what is stated in the transcript; do not infer facts or inject opinions." in SYSTEM_PROMPT_TEMPLATE
+    assert "Use 3-5 concise paragraphs" not in SYSTEM_PROMPT_TEMPLATE
+    assert "Paragraphs must be separated by blank lines." in SYSTEM_PROMPT_TEMPLATE
+
+    assert "Extract concrete details: topics discussed, suggestions made, decisions, and open follow-ups." in MAP_SYSTEM_PROMPT
+    assert "Use only transcript-grounded facts, with no opinions or invented details." in MAP_SYSTEM_PROMPT
+
+    assert "Preserve detailed factual coverage from the partial summaries." in REDUCE_SYSTEM_PROMPT_TEMPLATE
+    assert "Include only what is evidenced in the summaries; do not add opinions or inferred facts." in REDUCE_SYSTEM_PROMPT_TEMPLATE

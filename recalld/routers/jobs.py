@@ -147,6 +147,9 @@ async def job_state(job_id: str):
         "obsidian_uri": obsidian_uri,
         "error": job.error,
         "can_confirm_vault": job.stage_statuses.get("vault") == "awaiting_confirmation",
+        "can_overwrite_vault_note": bool(job.vault_conflict_path),
+        "can_append_vault_note": bool(job.vault_conflict_path),
+        "vault_conflict_path": job.vault_conflict_path,
         "can_confirm_speakers": job.stage_statuses.get("align") == "awaiting_confirmation",
         "can_swap_speakers": job.stage_statuses.get("align") == "awaiting_confirmation",
         "vault_preview": _load_vault_preview(job, cat) if job.stage_statuses.get("vault") == "awaiting_confirmation" else "",
@@ -268,15 +271,55 @@ async def swap_speakers(request: Request, job_id: str):
 
 
 @router.post("/{job_id}/confirm-vault-write", response_class=HTMLResponse)
-async def confirm_vault_write(request: Request, job_id: str, filename: str = Form(None)):
+async def confirm_vault_write(
+    request: Request,
+    job_id: str,
+    filename: str = Form(None),
+    write_mode: str = Form(None),
+):
     import asyncio
     from recalld.config import load_config
-    from recalld.jobs import JobStatus, save_job
+    from recalld.jobs import JobStatus
+    from recalld.pipeline.vault import VaultWriter
 
     job = load_job(job_id, scratch_root=DEFAULT_SCRATCH_ROOT)
     cfg = load_config()
+    cat = next((c for c in cfg.categories if c.id == job.category_id), None)
     if filename:
         job.filename = filename
+    if not cat:
+        job.status = JobStatus.failed
+        job.error = "Category not found"
+        job.stage_statuses["vault"] = "failed"
+        _save_job(job)
+        return templates.TemplateResponse(request, "processing.html", {"job": job})
+
+    note_name = job.filename or f"{job.created_at.date().isoformat()} {cat.name}.md"
+    note_path = f"{cat.vault_path}/{note_name}"
+    normalized_mode = (write_mode or "").strip().lower()
+
+    if normalized_mode not in {"overwrite", "append"}:
+        writer = VaultWriter(cfg.obsidian_api_url, cfg.obsidian_api_key)
+        if await writer.note_exists(note_path):
+            job.vault_conflict_path = note_path
+            job.stage_statuses["vault"] = "awaiting_confirmation"
+            job.status = JobStatus.pending
+            _save_job(job)
+            bus.publish(job.id, {
+                "stage": "vault",
+                "status": "awaiting_confirmation",
+                "can_confirm_vault": True,
+                "filename": note_name,
+                "vault_conflict_path": note_path,
+                "can_overwrite_vault_note": True,
+                "can_append_vault_note": True,
+            })
+            return templates.TemplateResponse(request, "processing.html", {"job": job})
+        normalized_mode = "overwrite"
+
+    job.filename = note_name
+    job.vault_write_mode = normalized_mode
+    job.vault_conflict_path = None
     job.status = JobStatus.running
     job.stage_statuses["vault"] = "pending"
     _save_job(job)
