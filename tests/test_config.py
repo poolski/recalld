@@ -9,6 +9,7 @@ def test_load_defaults(tmp_path):
     assert cfg.obsidian_api_url == "https://127.0.0.1:27124"
     assert cfg.llm_base_url == "http://localhost:1234/v1"
     assert cfg.llm_context_headroom == 0.8
+    assert cfg.llm_reasoning == "off"
     assert cfg.log_level == "info"
     assert cfg.last_used_category is None
     assert cfg.categories == []
@@ -27,18 +28,18 @@ def test_add_category(tmp_path):
     path = tmp_path / "config.json"
     cfg = load_config(path)
     cat = Category(
-        id="coaching",
-        name="Weekly Coaching",
-        vault_path="Notes/Coaching/Sessions",
-        focus_note_path="Notes/Coaching/Focus.md",
+        id="planning",
+        name="Weekly Planning",
+        vault_path="Notes/Planning/Sessions",
+        focus_note_path="Notes/Planning/Focus.md",
         speaker_a="You",
-        speaker_b="Coach",
+        speaker_b="Facilitator",
     )
     cfg.categories.append(cat)
     save_config(cfg, path)
     reloaded = load_config(path)
     assert len(reloaded.categories) == 1
-    assert reloaded.categories[0].name == "Weekly Coaching"
+    assert reloaded.categories[0].name == "Weekly Planning"
 
 
 def test_config_file_is_human_readable(tmp_path):
@@ -72,3 +73,8 @@ def test_default_config_path_is_resolved_at_call_time(tmp_path, monkeypatch):
 def test_config_defaults_to_personal_vault_name():
     cfg = Config()
     assert cfg.vault_name == "Personal"
+
+
+def test_legacy_reasoning_values_normalize_to_off():
+    cfg = Config(llm_reasoning="low")
+    assert cfg.llm_reasoning == "off"

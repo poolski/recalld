@@ -37,6 +37,17 @@
     <input type="number" name="llm_context_headroom" value="{{ cfg.llm_context_headroom }}" step="0.05" min="0.1" max="1.0">
   </div>
   <div class="field">
+    <label>Reasoning</label>
+    <select name="llm_reasoning">
+      {% for level in ["off", "on"] %}
+      <option value="{{ level }}" {% if cfg.llm_reasoning == level %}selected{% endif %}>{{ level | capitalize }}</option>
+      {% endfor %}
+    </select>
+    <p style="font-size:12px; color:var(--muted); margin-top:6px">
+      Off is usually better for faithful note rewriting; turn it on only if the model needs more deliberation.
+    </p>
+  </div>
+  <div class="field">
     <label>Current model</label>
     <div class="card" style="padding:14px 16px; margin-top:8px">
       <div style="display:flex; gap:16px; flex-wrap:wrap; align-items:center">
@@ -45,6 +56,7 @@
         <span><strong>Loaded context length</strong>: {{ "{:,}".format(current_model.loaded_context_length) if current_model and current_model.loaded_context_length else "Not loaded" }}</span>
         <span><strong>Maximum context length</strong>: {{ "{:,}".format(current_model.max_context_length) if current_model and current_model.max_context_length else "Unknown" }} tokens</span>
         <span><strong>Headroom budget</strong>: {{ "{:,}".format((detected_context_length * cfg.llm_context_headroom) | int) if detected_context_length else "Unknown" }} tokens</span>
+        <span><strong>Reasoning</strong>: {{ cfg.llm_reasoning | capitalize }}</span>
       </div>
     </div>
   </div>
