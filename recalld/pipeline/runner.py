@@ -396,6 +396,9 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
                   summary=result.summary if result else "",
                   focus_points=result.focus_points if result else [])
 
+    except asyncio.CancelledError:
+        # Expected during application shutdown (e.g., Ctrl+C). Treat as clean exit.
+        return
     except Exception as e:
         job.status = JobStatus.failed
         job.error = str(e)

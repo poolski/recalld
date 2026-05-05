@@ -13,6 +13,7 @@ from recalld.pipeline.align import LabelledTurn
 from recalld.pipeline.postprocess import PostProcessResult
 from recalld.pipeline.vault import render_session_note_preview
 from recalld.pipeline.runner import run_pipeline
+from recalld.runtime import spawn_pipeline_task
 
 router = APIRouter(prefix="/jobs")
 
@@ -160,8 +161,13 @@ async def job_state(job_id: str):
 @router.get("/{job_id}/events")
 async def job_events(job_id: str):
     async def event_generator():
-        async for data in bus.subscribe(job_id):
-            yield f"data: {data}\n\n"
+        import asyncio
+        try:
+            async for data in bus.subscribe(job_id):
+                yield f"data: {data}\n\n"
+        except asyncio.CancelledError:
+            # Expected when client disconnects or server shuts down.
+            return
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
@@ -202,7 +208,7 @@ async def _schedule_pipeline(request: Request, job_id: str, from_start: bool) ->
     _save_job(job)
     cfg = load_config()
     source = _job_source_path(job.id, job.original_filename)
-    asyncio.create_task(run_pipeline(job, source, cfg))
+    spawn_pipeline_task(run_pipeline(job, source, cfg))
     return templates.TemplateResponse(request, "processing.html", {"job": job})
 
 
@@ -217,7 +223,7 @@ async def _restart_from_stage(request: Request, job_id: str, stage: JobStage) ->
     _save_job(job)
     cfg = load_config()
     source = _job_source_path(job.id, job.original_filename)
-    asyncio.create_task(run_pipeline(job, source, cfg))
+    spawn_pipeline_task(run_pipeline(job, source, cfg))
     return templates.TemplateResponse(request, "processing.html", {"job": job})
 
 
@@ -252,7 +258,7 @@ async def confirm_speakers(request: Request, job_id: str):
     bus.publish(job.id, {"stage": "align", "status": "done"})
 
     source = _job_source_path(job.id, job.original_filename)
-    asyncio.create_task(run_pipeline(job, source, cfg))
+    spawn_pipeline_task(run_pipeline(job, source, cfg))
     return templates.TemplateResponse(request, "processing.html", {"job": job})
 
 
@@ -325,7 +331,7 @@ async def confirm_vault_write(
     _save_job(job)
 
     source = _job_source_path(job.id, job.original_filename)
-    asyncio.create_task(run_pipeline(job, source, cfg))
+    spawn_pipeline_task(run_pipeline(job, source, cfg))
     return templates.TemplateResponse(request, "processing.html", {"job": job})
 
 
@@ -365,7 +371,7 @@ async def skip_diarise(request: Request, job_id: str):
     bus.publish(job.id, {"stage": "align", "status": "done"})
 
     source = _job_source_path(job.id, job.original_filename)
-    asyncio.create_task(run_pipeline(job, source, cfg))
+    spawn_pipeline_task(run_pipeline(job, source, cfg))
     return templates.TemplateResponse(request, "processing.html", {"job": job})
 
 

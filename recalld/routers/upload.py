@@ -11,6 +11,7 @@ from recalld.app import templates
 from recalld.config import DEFAULT_CONFIG_PATH, load_config, save_config
 from recalld.jobs import DEFAULT_SCRATCH_ROOT, JobStatus, create_job, list_incomplete_jobs, list_jobs
 from recalld.pipeline.runner import run_pipeline
+from recalld.runtime import spawn_pipeline_task
 
 router = APIRouter()
 
@@ -78,7 +79,7 @@ async def upload(
     save_config(cfg)
 
     # Start pipeline in background
-    asyncio.create_task(run_pipeline(job, dest, cfg))
+    spawn_pipeline_task(run_pipeline(job, dest, cfg))
 
     return templates.TemplateResponse(request, "processing.html", {
         "job": job,
