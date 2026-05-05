@@ -114,6 +114,9 @@ def test_reset_job_for_rerun_from_failed_clears_current_stage_failure(tmp_path):
     assert job.stage_statuses["ingest"] == "done"
     assert job.stage_statuses["transcribe"] == "done"
     assert job.stage_statuses["diarise"] == "pending"
+    assert job.stage_statuses["align"] == "pending"
+    assert job.stage_statuses["postprocess"] == "pending"
+    assert job.stage_statuses["vault"] == "pending"
 
 
 def test_reset_job_for_rerun_from_start_clears_outputs_and_statuses(tmp_path):
@@ -187,6 +190,39 @@ def test_reset_job_for_rerun_from_stage_clears_outputs_from_that_stage_onward(tm
     assert job.stage_statuses["align"] == "pending"
     assert job.stage_statuses["postprocess"] == "pending"
     assert job.stage_statuses["vault"] == "pending"
+
+
+def test_reset_job_for_rerun_restart_from_transcribe_clears_transcript_cache(tmp_path):
+    job = create_job(category_id="adhd", original_filename="session.m4a", scratch_root=tmp_path)
+    transcript_file = tmp_path / "transcript.json"
+    transcript_file.write_text("[]")
+    diarisation_file = tmp_path / "diarisation.json"
+    diarisation_file.write_text("[]")
+    aligned_file = tmp_path / "aligned.json"
+    aligned_file.write_text("[]")
+    postprocess_file = tmp_path / "postprocess.json"
+    postprocess_file.write_text("{}")
+    job.transcript_path = str(transcript_file)
+    job.diarisation_path = str(diarisation_file)
+    job.aligned_path = str(aligned_file)
+    job.postprocess_path = str(postprocess_file)
+    job.stage_statuses["ingest"] = "done"
+    job.stage_statuses["transcribe"] = "done"
+    job.stage_statuses["diarise"] = "done"
+    job.stage_statuses["align"] = "done"
+    job.stage_statuses["postprocess"] = "done"
+    job.stage_statuses["vault"] = "failed"
+
+    reset_job_for_rerun(job, from_start=False, restart_stage=JobStage.transcribe)
+
+    assert job.transcript_path is None
+    assert job.diarisation_path is None
+    assert job.aligned_path is None
+    assert job.postprocess_path is None
+    assert not transcript_file.exists()
+    assert not diarisation_file.exists()
+    assert not aligned_file.exists()
+    assert not postprocess_file.exists()
 
 
 def test_can_restart_from_stage_checks_prerequisites(tmp_path):

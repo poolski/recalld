@@ -1,48 +1,179 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>New recording</h1>
+{% set stage_labels = {
+  "ingest": "Ingest",
+  "transcribe": "Transcribe",
+  "diarise": "Diarise",
+  "align": "Align",
+  "postprocess": "Summarise",
+  "vault": "Send to Obsidian"
+} %}
+<section class="page-head">
+  <h1>Conversation Processing</h1>
+  <p>Upload recordings, track each pipeline stage, and quickly resolve jobs that need action.</p>
+</section>
 
-<div class="card">
-{% if not cfg.categories %}
-<div class="alert error">
-  No categories configured. <a href="/settings/">Add one in Settings</a> before uploading.
+<div class="tab-strip">
+  <a class="tab {% if active_tab == 'new' %}active{% endif %}" href="/">New Recording</a>
+  <a class="tab {% if active_tab == 'jobs' %}active{% endif %}" href="/?tab=jobs">All Jobs</a>
+</div>
+
+{% if active_tab == "new" %}
+<div class="layout-two-col">
+  <div class="card">
+    {% if not cfg.categories %}
+    <div class="alert error">
+      No categories configured. <a href="/settings/">Add one in Settings</a> before uploading.
+    </div>
+    {% else %}
+    <form id="upload-form" action="/upload" method="post" enctype="multipart/form-data">
+      <div class="drop-zone" id="drop-zone">
+        <svg width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" style="opacity:0.4">
+          <path d="M12 16V4m0 0L8 8m4-4 4 4M4 20h16"/>
+        </svg>
+        <p>Drop a recording here, or click to browse</p>
+        <input type="file" id="file-input" name="file" accept=".m4a,.mp4,.wav,.mov,.mkv,.webm" style="display:none" required>
+      </div>
+
+      <div class="field" style="margin-top:16px">
+        <label for="category_id">Category</label>
+        <select name="category_id" id="category_id">
+          {% for cat in cfg.categories %}
+          <option value="{{ cat.id }}" {% if cfg.last_used_category == cat.id %}selected{% endif %}>
+            {{ cat.name }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="note_title">Note title (optional)</label>
+        <input type="text" id="note_title" name="note_title" placeholder="e.g. 2026-04-29 Session.md">
+      </div>
+
+      <button type="submit" style="margin-top:8px">Process recording</button>
+    </form>
+    {% endif %}
+  </div>
+
+  <aside class="card side-summary">
+    <h2>Queue snapshot</h2>
+    <div class="stat-grid">
+      <div><span>Running</span><strong>{{ status_counts.running }}</strong></div>
+      <div><span>Needs confirmation</span><strong>{{ status_counts.awaiting_confirmation }}</strong></div>
+      <div><span>Failed</span><strong>{{ status_counts.failed }}</strong></div>
+      <div><span>Complete</span><strong>{{ status_counts.complete }}</strong></div>
+    </div>
+    {% if incomplete_jobs %}
+    <h3>Needs attention</h3>
+    <ul class="compact-jobs">
+      {% for job in incomplete_jobs[:6] %}
+      <li>
+        <a href="/jobs/{{ job.id }}">{{ job.original_filename }}</a>
+        <span>{{ stage_labels.get(job.current_stage.value, job.current_stage.value) }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </aside>
 </div>
 {% else %}
-<form id="upload-form" action="/upload" method="post" enctype="multipart/form-data">
-  <div class="drop-zone" id="drop-zone">
-    <svg width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" style="opacity:0.4">
-      <path d="M12 16V4m0 0L8 8m4-4 4 4M4 20h16"/>
-    </svg>
-    <p>Drop a recording here, or click to browse</p>
-    <input type="file" id="file-input" name="file" accept=".m4a,.mp4,.wav,.mov,.mkv,.webm" style="display:none" required>
-  </div>
+<div class="jobs-shell">
+  <section class="card jobs-table-card">
+    <div class="job-controls">
+      <div class="chip-row">
+        <span class="chip">Running: {{ status_counts.running }}</span>
+        <span class="chip">Awaiting confirmation: {{ status_counts.awaiting_confirmation }}</span>
+        <span class="chip">Failed: {{ status_counts.failed }}</span>
+        <span class="chip">Complete: {{ status_counts.complete }}</span>
+      </div>
+      <p class="hint">Sorted by most recent. Use job detail actions to restart, confirm speakers, or write to vault.</p>
+    </div>
+    <div class="table-wrap">
+      <table class="jobs-table">
+        <thead>
+          <tr>
+            <th>File</th>
+            <th>Category</th>
+            <th>Created</th>
+            <th>Stage</th>
+            <th>Status</th>
+            <th>Duration</th>
+            <th>Note</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for job in all_jobs %}
+          {% set category = cfg.categories | selectattr("id", "equalto", job.category_id) | first %}
+          {% set awaiting = "awaiting_confirmation" in job.stage_statuses.values() %}
+          <tr {% if selected_job and selected_job.id == job.id %}class="selected"{% endif %}>
+            <td class="file-cell"><a href="/jobs/{{ job.id }}">{{ job.original_filename }}</a></td>
+            <td>{{ category.name if category else job.category_id }}</td>
+            <td>{{ job.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+            <td><span class="stage-pill">{{ stage_labels.get(job.current_stage.value, job.current_stage.value) }}</span></td>
+            <td>
+              {% if awaiting %}
+              <span class="status-badge awaiting">awaiting confirmation</span>
+              {% else %}
+              <span class="status-badge {{ job.status.value }}">{{ job.status.value }}</span>
+              {% endif %}
+            </td>
+            <td>{% if job.wav_path %}Ready{% else %}-{% endif %}</td>
+            <td>{% if job.filename %}{{ job.filename }}{% else %}-{% endif %}</td>
+            <td class="actions">
+              <a href="/jobs/{{ job.id }}" class="btn-ghost compact">View</a>
+              <button type="button" class="btn-ghost compact"
+                hx-post="/jobs/{{ job.id }}/restart-from/{{ job.current_stage.value }}" hx-swap="none"
+                title="Restart from {{ job.current_stage.value }}">Restart</button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
 
-  <div class="field" style="margin-top:16px">
-    <label for="category_id">Category</label>
-    <select name="category_id" id="category_id">
-      {% for cat in cfg.categories %}
-      <option value="{{ cat.id }}" {% if cfg.last_used_category == cat.id %}selected{% endif %}>
-        {{ cat.name }}
-      </option>
-      {% endfor %}
-    </select>
-  </div>
-
-  <button type="submit" style="margin-top:8px">Process recording</button>
-</form>
+  <aside class="card detail-panel">
+    <h2>Selected job</h2>
+    {% if selected_job %}
+    {% set selected_category = cfg.categories | selectattr("id", "equalto", selected_job.category_id) | first %}
+    <p class="detail-file">{{ selected_job.original_filename }}</p>
+    <dl>
+      <dt>Category</dt>
+      <dd>{{ selected_category.name if selected_category else selected_job.category_id }}</dd>
+      <dt>Current stage</dt>
+      <dd>{{ stage_labels.get(selected_job.current_stage.value, selected_job.current_stage.value) }}</dd>
+      <dt>Status</dt>
+      <dd>{{ selected_job.status.value }}</dd>
+      <dt>Created</dt>
+      <dd>{{ selected_job.created_at.strftime("%Y-%m-%d %H:%M") }}</dd>
+      <dt>Topic chunking</dt>
+      <dd>
+        {% if selected_job.topic_count %}
+        {{ selected_job.topic_count }} topics ({{ selected_job.chunk_strategy or "single" }})
+        {% else %}
+        not available yet
+        {% endif %}
+      </dd>
+    </dl>
+    <div class="detail-actions">
+      <a href="/jobs/{{ selected_job.id }}" class="btn">View details</a>
+      <button type="button" class="btn-ghost"
+        hx-post="/jobs/{{ selected_job.id }}/restart-from/{{ selected_job.current_stage.value }}" hx-swap="none">
+        Restart from {{ stage_labels.get(selected_job.current_stage.value, selected_job.current_stage.value) }}
+      </button>
+      {% if selected_job.stage_statuses.get("align") == "awaiting_confirmation" %}
+      <a href="/jobs/{{ selected_job.id }}" class="btn-ghost">Confirm speakers</a>
+      {% endif %}
+      {% if selected_job.stage_statuses.get("vault") == "done" %}
+      <a href="/jobs/{{ selected_job.id }}/open-in-obsidian" class="btn-ghost">Open in Obsidian</a>
+      {% endif %}
+    </div>
+    {% else %}
+    <p class="hint">No jobs yet. Upload a recording to start.</p>
+    {% endif %}
+  </aside>
+</div>
 {% endif %}
-</div>
-
-<div class="card">
-{% if incomplete_jobs %}
-<div class="card">
-<h2>Incomplete jobs</h2>
-<ul class="job-list">
-  {% for job in incomplete_jobs %}
-  {% include "partials/job_row.html" %}
-  {% endfor %}
-</ul>
-</div>
-{% endif %}
-</div>
 {% endblock %}

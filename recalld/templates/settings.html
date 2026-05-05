@@ -152,12 +152,12 @@
 
 <h2>Add category</h2>
 <form action="/categories/" method="post">
-  <div class="field"><label>Name</label><input type="text" name="name" required placeholder="ADHD Coaching"></div>
-  <div class="field"><label>Vault path</label><input type="text" name="vault_path" required placeholder="Life/Mental Health/ADHD Coaching/Sessions"></div>
-  <div class="field"><label>Focus note path (optional)</label><input type="text" name="focus_note_path" placeholder="Life/Mental Health/ADHD Coaching/Coaching Focus.md"></div>
+  <div class="field"><label>Name</label><input type="text" name="name" required placeholder="Project"></div>
+  <div class="field"><label>Vault path</label><input type="text" name="vault_path" required placeholder="Notes/Project/Sessions"></div>
+  <div class="field"><label>Focus note path (optional)</label><input type="text" name="focus_note_path" placeholder="Notes/Project/Focus.md"></div>
   <div style="display:flex; gap:8px">
-    <div class="field" style="flex:1"><label>Speaker A name</label><input type="text" name="speaker_a" value="You"></div>
-    <div class="field" style="flex:1"><label>Speaker B name</label><input type="text" name="speaker_b" value="Coach"></div>
+    <div class="field" style="flex:1"><label>Primary speaker name</label><input type="text" name="speaker_a" value="Speaker 1"></div>
+    <div class="field" style="flex:1"><label>Second speaker name</label><input type="text" name="speaker_b" value="Speaker 2"></div>
   </div>
   <button type="submit">Add category</button>
 </form>

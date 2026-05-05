@@ -8,11 +8,12 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Stre
 
 from recalld.app import templates
 from recalld.events import bus
-from recalld.jobs import DEFAULT_SCRATCH_ROOT, JobStage, can_restart_from_stage, delete_job, load_job, reset_job_for_rerun, save_job
+from recalld.jobs import DEFAULT_SCRATCH_ROOT, JobStage, JobStatus, can_restart_from_stage, delete_job, load_job, reset_job_for_rerun, save_job
 from recalld.pipeline.align import LabelledTurn
 from recalld.pipeline.postprocess import PostProcessResult
 from recalld.pipeline.vault import render_session_note_preview
-from recalld.pipeline.runner import run_pipeline
+from recalld.pipeline.runner import _normalize_note_title, run_pipeline
+from recalld.runtime import spawn_pipeline_task
 
 router = APIRouter(prefix="/jobs")
 
@@ -147,6 +148,9 @@ async def job_state(job_id: str):
         "obsidian_uri": obsidian_uri,
         "error": job.error,
         "can_confirm_vault": job.stage_statuses.get("vault") == "awaiting_confirmation",
+        "can_overwrite_vault_note": bool(job.vault_conflict_path),
+        "can_append_vault_note": bool(job.vault_conflict_path),
+        "vault_conflict_path": job.vault_conflict_path,
         "can_confirm_speakers": job.stage_statuses.get("align") == "awaiting_confirmation",
         "can_swap_speakers": job.stage_statuses.get("align") == "awaiting_confirmation",
         "vault_preview": _load_vault_preview(job, cat) if job.stage_statuses.get("vault") == "awaiting_confirmation" else "",
@@ -157,8 +161,13 @@ async def job_state(job_id: str):
 @router.get("/{job_id}/events")
 async def job_events(job_id: str):
     async def event_generator():
-        async for data in bus.subscribe(job_id):
-            yield f"data: {data}\n\n"
+        import asyncio
+        try:
+            async for data in bus.subscribe(job_id):
+                yield f"data: {data}\n\n"
+        except asyncio.CancelledError:
+            # Expected when client disconnects or server shuts down.
+            return
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
@@ -190,31 +199,29 @@ def _job_source_path(job_id: str, original_filename: str):
 
 
 async def _schedule_pipeline(request: Request, job_id: str, from_start: bool) -> HTMLResponse:
-    import asyncio
     from recalld.config import load_config
 
     job = load_job(job_id, scratch_root=DEFAULT_SCRATCH_ROOT)
     reset_job_for_rerun(job, from_start=from_start)
-    job.status = job.status.running
+    job.status = JobStatus.running
     _save_job(job)
     cfg = load_config()
     source = _job_source_path(job.id, job.original_filename)
-    asyncio.create_task(run_pipeline(job, source, cfg))
+    spawn_pipeline_task(run_pipeline(job, source, cfg))
     return templates.TemplateResponse(request, "processing.html", {"job": job})
 
 
 async def _restart_from_stage(request: Request, job_id: str, stage: JobStage) -> HTMLResponse:
-    import asyncio
     from recalld.config import load_config
 
     job = load_job(job_id, scratch_root=DEFAULT_SCRATCH_ROOT)
     if can_restart_from_stage(job, stage):
         reset_job_for_rerun(job, from_start=False, restart_stage=stage)
-    job.status = job.status.running
+    job.status = JobStatus.running
     _save_job(job)
     cfg = load_config()
     source = _job_source_path(job.id, job.original_filename)
-    asyncio.create_task(run_pipeline(job, source, cfg))
+    spawn_pipeline_task(run_pipeline(job, source, cfg))
     return templates.TemplateResponse(request, "processing.html", {"job": job})
 
 
@@ -235,7 +242,6 @@ async def restart_from_stage(request: Request, job_id: str, stage: JobStage):
 
 @router.post("/{job_id}/confirm-speakers", response_class=HTMLResponse)
 async def confirm_speakers(request: Request, job_id: str):
-    import asyncio
     from recalld.config import load_config
     from recalld.jobs import JobStage, JobStatus
 
@@ -249,7 +255,7 @@ async def confirm_speakers(request: Request, job_id: str):
     bus.publish(job.id, {"stage": "align", "status": "done"})
 
     source = _job_source_path(job.id, job.original_filename)
-    asyncio.create_task(run_pipeline(job, source, cfg))
+    spawn_pipeline_task(run_pipeline(job, source, cfg))
     return templates.TemplateResponse(request, "processing.html", {"job": job})
 
 
@@ -268,21 +274,69 @@ async def swap_speakers(request: Request, job_id: str):
 
 
 @router.post("/{job_id}/confirm-vault-write", response_class=HTMLResponse)
-async def confirm_vault_write(request: Request, job_id: str, filename: str = Form(None)):
-    import asyncio
+async def confirm_vault_write(
+    request: Request,
+    job_id: str,
+    filename: str = Form(None),
+    write_mode: str = Form(None),
+):
     from recalld.config import load_config
-    from recalld.jobs import JobStatus, save_job
+    from recalld.jobs import JobStatus
+    from recalld.pipeline.vault import VaultWriter
 
     job = load_job(job_id, scratch_root=DEFAULT_SCRATCH_ROOT)
     cfg = load_config()
+    cat = next((c for c in cfg.categories if c.id == job.category_id), None)
     if filename:
-        job.filename = filename
+        sanitized = _normalize_note_title(filename, job.created_at.date())
+        if sanitized:
+            job.filename = sanitized
+    if not cat:
+        job.status = JobStatus.failed
+        job.error = "Category not found"
+        job.stage_statuses["vault"] = "failed"
+        _save_job(job)
+        return templates.TemplateResponse(request, "processing.html", {"job": job})
+
+    note_name = job.filename or f"{job.created_at.date().isoformat()} {cat.name}.md"
+    note_path = f"{cat.vault_path}/{note_name}"
+    normalized_mode = (write_mode or "").strip().lower()
+
+    if normalized_mode and normalized_mode not in {"overwrite", "append"}:
+        return HTMLResponse("Invalid write mode", status_code=400)
+
+    if normalized_mode == "append":
+        writer = VaultWriter(cfg.obsidian_api_url, cfg.obsidian_api_key)
+        if not await writer.note_exists(note_path):
+            normalized_mode = "overwrite"
+    elif not normalized_mode:
+        writer = VaultWriter(cfg.obsidian_api_url, cfg.obsidian_api_key)
+        if await writer.note_exists(note_path):
+            job.vault_conflict_path = note_path
+            job.stage_statuses["vault"] = "awaiting_confirmation"
+            job.status = JobStatus.pending
+            _save_job(job)
+            bus.publish(job.id, {
+                "stage": "vault",
+                "status": "awaiting_confirmation",
+                "can_confirm_vault": True,
+                "filename": note_name,
+                "vault_conflict_path": note_path,
+                "can_overwrite_vault_note": True,
+                "can_append_vault_note": True,
+            })
+            return templates.TemplateResponse(request, "processing.html", {"job": job})
+        normalized_mode = "overwrite"
+
+    job.filename = note_name
+    job.vault_write_mode = normalized_mode
+    job.vault_conflict_path = None
     job.status = JobStatus.running
     job.stage_statuses["vault"] = "pending"
     _save_job(job)
 
     source = _job_source_path(job.id, job.original_filename)
-    asyncio.create_task(run_pipeline(job, source, cfg))
+    spawn_pipeline_task(run_pipeline(job, source, cfg))
     return templates.TemplateResponse(request, "processing.html", {"job": job})
 
 
@@ -322,7 +376,7 @@ async def skip_diarise(request: Request, job_id: str):
     bus.publish(job.id, {"stage": "align", "status": "done"})
 
     source = _job_source_path(job.id, job.original_filename)
-    asyncio.create_task(run_pipeline(job, source, cfg))
+    spawn_pipeline_task(run_pipeline(job, source, cfg))
     return templates.TemplateResponse(request, "processing.html", {"job": job})
 
 

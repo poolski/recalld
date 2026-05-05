@@ -93,6 +93,8 @@ class Job(BaseModel):
     topic_count: Optional[int] = None
     chunk_strategy: Optional[str] = None
     filename: Optional[str] = None
+    vault_write_mode: Optional[str] = None
+    vault_conflict_path: Optional[str] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -106,6 +108,35 @@ class Job(BaseModel):
 
 def _job_dir(job_id: str, scratch_root: Path) -> Path:
     return scratch_root / job_id
+
+
+def _remove_artifact(path_value: Optional[str]) -> None:
+    if not path_value:
+        return
+    try:
+        Path(path_value).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _clear_outputs_from_stage(job: "Job", stage: JobStage) -> None:
+    if stage == JobStage.transcribe:
+        _remove_artifact(job.transcript_path)
+        job.transcript_path = None
+    if STAGE_ORDER[stage.value] <= STAGE_ORDER[JobStage.diarise.value]:
+        _remove_artifact(job.diarisation_path)
+        job.diarisation_path = None
+    if STAGE_ORDER[stage.value] <= STAGE_ORDER[JobStage.align.value]:
+        _remove_artifact(job.aligned_path)
+        job.aligned_path = None
+    if STAGE_ORDER[stage.value] <= STAGE_ORDER[JobStage.postprocess.value]:
+        _remove_artifact(job.postprocess_path)
+        job.postprocess_path = None
+        job.topic_count = None
+        job.chunk_strategy = None
+    if STAGE_ORDER[stage.value] <= STAGE_ORDER[JobStage.vault.value]:
+        job.vault_write_mode = None
+        job.vault_conflict_path = None
 
 
 def create_job(category_id: str, original_filename: str, scratch_root: Path = DEFAULT_SCRATCH_ROOT) -> Job:
@@ -133,15 +164,13 @@ def reset_job_for_rerun(job: Job, from_start: bool, restart_stage: JobStage | No
     if from_start:
         job.current_stage = JobStage.ingest
         job.stage_statuses = default_stage_statuses()
+        _remove_artifact(job.wav_path)
         job.wav_path = None
-        job.transcript_path = None
-        job.diarisation_path = None
-        job.aligned_path = None
-        job.postprocess_path = None
+        _clear_outputs_from_stage(job, JobStage.transcribe)
         job.speaker_00 = None
         job.speaker_01 = None
-        job.topic_count = None
-        job.chunk_strategy = None
+        job.vault_write_mode = None
+        job.vault_conflict_path = None
         return
 
     if restart_stage is not None:
@@ -149,24 +178,20 @@ def reset_job_for_rerun(job: Job, from_start: bool, restart_stage: JobStage | No
         for stage in STAGE_NAMES:
             if STAGE_ORDER[stage] >= STAGE_ORDER[restart_stage.value]:
                 job.stage_statuses[stage] = "pending"
-        if STAGE_ORDER[restart_stage.value] <= STAGE_ORDER[JobStage.diarise.value]:
-            job.diarisation_path = None
-            job.aligned_path = None
-            job.postprocess_path = None
-            job.topic_count = None
-            job.chunk_strategy = None
-        elif restart_stage == JobStage.align:
-            job.aligned_path = None
-            job.postprocess_path = None
-            job.topic_count = None
-            job.chunk_strategy = None
-        elif restart_stage == JobStage.postprocess:
-            job.postprocess_path = None
-            job.topic_count = None
-            job.chunk_strategy = None
+        _clear_outputs_from_stage(job, restart_stage)
+        if STAGE_ORDER[restart_stage.value] <= STAGE_ORDER[JobStage.align.value]:
+            job.speaker_00 = None
+            job.speaker_01 = None
         return
 
-    job.stage_statuses[job.current_stage.value] = "pending"
+    restart_stage = job.current_stage
+    for stage in STAGE_NAMES:
+        if STAGE_ORDER[stage] >= STAGE_ORDER[restart_stage.value]:
+            job.stage_statuses[stage] = "pending"
+    _clear_outputs_from_stage(job, restart_stage)
+    if STAGE_ORDER[restart_stage.value] <= STAGE_ORDER[JobStage.align.value]:
+        job.speaker_00 = None
+        job.speaker_01 = None
 
 
 def delete_job(job_id: str, scratch_root: Path = DEFAULT_SCRATCH_ROOT) -> None:
@@ -174,6 +199,13 @@ def delete_job(job_id: str, scratch_root: Path = DEFAULT_SCRATCH_ROOT) -> None:
 
 
 def list_incomplete_jobs(scratch_root: Path = DEFAULT_SCRATCH_ROOT) -> list[Job]:
+    return [
+        job for job in list_jobs(scratch_root=scratch_root)
+        if job.status not in (JobStatus.complete,)
+    ]
+
+
+def list_jobs(scratch_root: Path = DEFAULT_SCRATCH_ROOT) -> list[Job]:
     if not scratch_root.exists():
         return []
     jobs = []
@@ -182,6 +214,5 @@ def list_incomplete_jobs(scratch_root: Path = DEFAULT_SCRATCH_ROOT) -> list[Job]
         if not job_file.exists():
             continue
         job = Job.model_validate_json(job_file.read_text())
-        if job.status not in (JobStatus.complete,):
-            jobs.append(job)
+        jobs.append(job)
     return sorted(jobs, key=lambda j: j.created_at, reverse=True)
