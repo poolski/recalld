@@ -75,7 +75,7 @@
       <div id="vault-confirm-controls" style="{% if stage_status == 'awaiting_confirmation' %}display:block{% else %}display:none{% endif %}; margin-top:12px">
         <div class="field">
           <label for="vault-filename">Note title</label>
-          <input type="text" id="vault-filename" name="filename" value="{{ job.filename or '' }}" placeholder="e.g. 2026-04-29 Coaching.md">
+          <input type="text" id="vault-filename" name="filename" value="{{ job.filename or '' }}" placeholder="e.g. 2026-04-29 Session.md">
         </div>
         <div id="vault-conflict-box" class="alert error" style="{% if job.vault_conflict_path %}display:block{% else %}display:none{% endif %}; margin-top:12px">
           <p id="vault-conflict-message">

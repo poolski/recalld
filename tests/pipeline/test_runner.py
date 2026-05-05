@@ -29,7 +29,7 @@ async def test_pipeline_waits_for_vault_confirmation(tmp_path, monkeypatch):
 
     cfg = Config(
         llm_model="test-model",
-        categories=[Category(id="cat-1", name="Coaching", vault_path="Life/Sessions")],
+        categories=[Category(id="cat-1", name="Coaching", vault_path="Notes/Sessions")],
     )
     result = PostProcessResult(
         summary="Summary",
@@ -88,7 +88,7 @@ async def test_pipeline_appends_to_existing_vault_note_when_requested(tmp_path, 
 
     cfg = Config(
         llm_model="test-model",
-        categories=[Category(id="cat-1", name="Coaching", vault_path="Life/Sessions")],
+        categories=[Category(id="cat-1", name="Coaching", vault_path="Notes/Sessions")],
     )
 
     with patch("recalld.pipeline.runner.VaultWriter") as MockWriter:
@@ -141,7 +141,7 @@ async def test_pipeline_waits_for_speaker_confirmation_after_align(tmp_path, mon
         categories=[Category(
             id="cat-1",
             name="Coaching",
-            vault_path="Life/Sessions",
+            vault_path="Notes/Sessions",
             speaker_a="Speaker A",
             speaker_b="Speaker B",
         )],
@@ -190,7 +190,7 @@ async def test_pipeline_maps_diariser_speakers_in_encounter_order(tmp_path, monk
         categories=[Category(
             id="cat-1",
             name="Coaching",
-            vault_path="Life/Sessions",
+            vault_path="Notes/Sessions",
             speaker_a="You",
             speaker_b="Coach",
         )],
@@ -220,7 +220,7 @@ async def test_pipeline_falls_back_to_default_name_when_inference_fails(tmp_path
 
     cfg = Config(
         llm_model="test-model",
-        categories=[Category(id="cat-1", name="Coaching", vault_path="Life/Sessions")],
+        categories=[Category(id="cat-1", name="Coaching", vault_path="Notes/Sessions")],
     )
     result = PostProcessResult(
         summary="Summary",

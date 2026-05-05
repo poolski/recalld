@@ -28,20 +28,20 @@ def _turns() -> list[LabelledTurn]:
 def test_render_session_note_contains_summary():
     note = render_session_note(
         session_date=date(2025, 4, 28),
-        category="ADHD Coaching",
+        category="Weekly Coaching",
         speakers=["You", "Coach"],
         result=_result(),
         turns=_turns(),
     )
     assert "A good session." in note
     assert "date: 2025-04-28" in note
-    assert "category: ADHD Coaching" in note
+    assert "category: Weekly Coaching" in note
 
 
 def test_render_session_note_focus_checkboxes():
     note = render_session_note(
         session_date=date(2025, 4, 28),
-        category="ADHD Coaching",
+        category="Weekly Coaching",
         speakers=["You", "Coach"],
         result=_result(),
         turns=_turns(),
@@ -53,7 +53,7 @@ def test_render_session_note_focus_checkboxes():
 def test_render_session_note_collapsed_transcript():
     note = render_session_note(
         session_date=date(2025, 4, 28),
-        category="ADHD Coaching",
+        category="Weekly Coaching",
         speakers=["You", "Coach"],
         result=_result(),
         turns=_turns(),
@@ -66,7 +66,7 @@ def test_render_session_note_collapsed_transcript():
 def test_render_session_note_failed_postprocess():
     note = render_session_note(
         session_date=date(2025, 4, 28),
-        category="ADHD Coaching",
+        category="Weekly Coaching",
         speakers=["You", "Coach"],
         result=None,
         turns=_turns(),
@@ -77,7 +77,7 @@ def test_render_session_note_failed_postprocess():
 def test_render_session_note_preview_strips_frontmatter_and_truncates():
     note = render_session_note_preview(
         session_date=date(2025, 4, 28),
-        category="ADHD Coaching",
+        category="Weekly Coaching",
         speakers=["You", "Coach"],
         result=_result(summary="A" * 2000),
         turns=_turns(),
@@ -100,13 +100,13 @@ def test_render_focus_section():
 @respx.mock
 @pytest.mark.asyncio
 async def test_vault_writer_creates_note():
-    respx.post("https://127.0.0.1:27124/vault/Life/Sessions/2025-04-28%20ADHD%20Coaching.md").mock(
+    respx.post("https://127.0.0.1:27124/vault/Notes/Sessions/2025-04-28%20Weekly%20Coaching.md").mock(
         return_value=httpx.Response(200)
     )
     writer = VaultWriter(api_url="https://127.0.0.1:27124", api_key="token")
     await writer.write_note(
-        vault_path="Life/Sessions",
-        filename="2025-04-28 ADHD Coaching.md",
+        vault_path="Notes/Sessions",
+        filename="2025-04-28 Weekly Coaching.md",
         content="# Note",
     )
 
@@ -114,11 +114,11 @@ async def test_vault_writer_creates_note():
 @respx.mock
 @pytest.mark.asyncio
 async def test_vault_writer_opens_note_via_rest_api():
-    route = respx.post("https://127.0.0.1:27124/open/Life/Sessions/2025-04-28%20ADHD%20Coaching.md").mock(
+    route = respx.post("https://127.0.0.1:27124/open/Notes/Sessions/2025-04-28%20Weekly%20Coaching.md").mock(
         return_value=httpx.Response(200)
     )
     writer = VaultWriter(api_url="https://127.0.0.1:27124", api_key="token")
-    await writer.open_note("Life/Sessions/2025-04-28 ADHD Coaching.md")
+    await writer.open_note("Notes/Sessions/2025-04-28 Weekly Coaching.md")
 
     assert route.called
 
@@ -126,13 +126,13 @@ async def test_vault_writer_opens_note_via_rest_api():
 @respx.mock
 @pytest.mark.asyncio
 async def test_vault_writer_omits_auth_header_when_api_key_blank():
-    route = respx.post("https://127.0.0.1:27124/vault/Life/Sessions/2025-04-28%20ADHD%20Coaching.md").mock(
+    route = respx.post("https://127.0.0.1:27124/vault/Notes/Sessions/2025-04-28%20Weekly%20Coaching.md").mock(
         return_value=httpx.Response(200)
     )
     writer = VaultWriter(api_url="https://127.0.0.1:27124", api_key="")
     await writer.write_note(
-        vault_path="Life/Sessions",
-        filename="2025-04-28 ADHD Coaching.md",
+        vault_path="Notes/Sessions",
+        filename="2025-04-28 Weekly Coaching.md",
         content="# Note",
     )
 

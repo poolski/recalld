@@ -27,10 +27,10 @@ def test_add_category(tmp_path):
     path = tmp_path / "config.json"
     cfg = load_config(path)
     cat = Category(
-        id="adhd",
-        name="ADHD Coaching",
-        vault_path="Life/Mental Health/ADHD Coaching/Sessions",
-        focus_note_path="Life/Mental Health/ADHD Coaching/Coaching Focus.md",
+        id="coaching",
+        name="Weekly Coaching",
+        vault_path="Notes/Coaching/Sessions",
+        focus_note_path="Notes/Coaching/Focus.md",
         speaker_a="You",
         speaker_b="Coach",
     )
@@ -38,7 +38,7 @@ def test_add_category(tmp_path):
     save_config(cfg, path)
     reloaded = load_config(path)
     assert len(reloaded.categories) == 1
-    assert reloaded.categories[0].name == "ADHD Coaching"
+    assert reloaded.categories[0].name == "Weekly Coaching"
 
 
 def test_config_file_is_human_readable(tmp_path):

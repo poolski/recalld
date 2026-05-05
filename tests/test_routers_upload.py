@@ -53,7 +53,7 @@ def test_upload_uses_user_provided_note_title(tmp_path, monkeypatch):
     monkeypatch.setattr("recalld.routers.upload.run_pipeline", lambda *args, **kwargs: None)
     monkeypatch.setattr("asyncio.create_task", lambda coro: None)
 
-    cfg = Config(categories=[Category(id="cat-1", name="Coaching", vault_path="Life/Sessions")])
+    cfg = Config(categories=[Category(id="cat-1", name="Coaching", vault_path="Notes/Sessions")])
     save_config(cfg, path=config_path)
 
     client = TestClient(create_app())
@@ -74,7 +74,7 @@ def test_upload_sanitizes_user_provided_note_title(tmp_path, monkeypatch):
     monkeypatch.setattr("recalld.routers.upload.run_pipeline", lambda *args, **kwargs: None)
     monkeypatch.setattr("asyncio.create_task", lambda coro: None)
 
-    cfg = Config(categories=[Category(id="cat-1", name="Coaching", vault_path="Life/Sessions")])
+    cfg = Config(categories=[Category(id="cat-1", name="Coaching", vault_path="Notes/Sessions")])
     save_config(cfg, path=config_path)
 
     client = TestClient(create_app())

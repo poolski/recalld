@@ -173,7 +173,7 @@ async def postprocess(
     stream_cb: Optional[Callable[[str], None]] = None,
     event_cb: Optional[Callable[[str, dict], None]] = None,
     speaker_a_name: str = "You",
-    speaker_b_name: str = "Coach",
+    speaker_b_name: str = "Speaker 2",
 ) -> PostProcessResult:
     client = LLMClient(base_url=llm_base_url, model=llm_model)
     if progress_cb:

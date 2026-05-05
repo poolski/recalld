@@ -245,7 +245,7 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
             labelled = [LabelledTurn(**t) for t in json.loads(Path(job.aligned_path).read_text())]
             cat = next((c for c in cfg.categories if c.id == job.category_id), None)
             speaker_a_name = cat.speaker_a if cat else "You"
-            speaker_b_name = cat.speaker_b if cat else "Coach"
+            speaker_b_name = cat.speaker_b if cat else "Speaker 2"
 
             ctx_len = await ensure_loaded_context_length(cfg.llm_base_url, cfg.llm_model)
             budget = token_budget(ctx_len, cfg.llm_context_headroom)
@@ -300,7 +300,7 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
             preview = render_session_note_preview(
                 session_date=job.created_at.date(),
                 category=cat.name if cat else "",
-                speakers=[cat.speaker_a, cat.speaker_b] if cat else ["You", "Coach"],
+                speakers=[cat.speaker_a, cat.speaker_b] if cat else ["Speaker 1", "Speaker 2"],
                 result=result,
                 turns=labelled,
             ) if cat else ""
@@ -330,7 +330,7 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
                 preview = render_session_note_preview(
                     session_date=job.created_at.date(),
                     category=cat.name if cat else "",
-                    speakers=[cat.speaker_a, cat.speaker_b] if cat else ["You", "Coach"],
+                    speakers=[cat.speaker_a, cat.speaker_b] if cat else ["Speaker 1", "Speaker 2"],
                     result=result,
                     turns=labelled,
                 ) if cat and result else ""

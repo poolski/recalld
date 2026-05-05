@@ -143,7 +143,7 @@ def test_confirm_vault_write_updates_job_and_resumes_pipeline(scratch, client, m
 
     monkeypatch.setattr("recalld.routers.jobs.run_pipeline", fake_run_pipeline)
     monkeypatch.setattr("asyncio.create_task", fake_create_task)
-    config = Config(categories=[Category(id="test", name="Coaching", vault_path="Life/Sessions")])
+    config = Config(categories=[Category(id="test", name="Coaching", vault_path="Notes/Sessions")])
     monkeypatch.setattr("recalld.config.load_config", lambda path=None: config)
     async def fake_exists(self, vault_path):
         return False
@@ -168,7 +168,7 @@ def test_confirm_vault_write_prompts_overwrite_or_append_when_note_exists(scratc
     job.stage_statuses["vault"] = "awaiting_confirmation"
     save_job(job, scratch_root=scratch)
 
-    config = Config(categories=[Category(id="test", name="Coaching", vault_path="Life/Sessions")])
+    config = Config(categories=[Category(id="test", name="Coaching", vault_path="Notes/Sessions")])
     monkeypatch.setattr("recalld.config.load_config", lambda path=None: config)
 
     async def fake_exists(self, vault_path):
@@ -194,7 +194,7 @@ def test_confirm_vault_write_prompts_overwrite_or_append_when_note_exists(scratc
     updated = load_job(job.id, scratch_root=scratch)
     assert updated.status == JobStatus.pending
     assert updated.stage_statuses["vault"] == "awaiting_confirmation"
-    assert updated.vault_conflict_path == f"Life/Sessions/{session_date.isoformat()} Coaching.md"
+    assert updated.vault_conflict_path == f"Notes/Sessions/{session_date.isoformat()} Coaching.md"
     assert "Overwrite existing note" in resp.text
     assert "Append to existing note" in resp.text
     assert "coro" not in scheduled
@@ -209,7 +209,7 @@ def test_confirm_vault_write_with_append_mode_resumes_pipeline(scratch, client, 
     job.stage_statuses["vault"] = "awaiting_confirmation"
     save_job(job, scratch_root=scratch)
 
-    config = Config(categories=[Category(id="test", name="Coaching", vault_path="Life/Sessions")])
+    config = Config(categories=[Category(id="test", name="Coaching", vault_path="Notes/Sessions")])
     monkeypatch.setattr("recalld.config.load_config", lambda path=None: config)
 
     async def fake_exists(self, vault_path):
@@ -253,7 +253,7 @@ def test_confirm_vault_write_with_append_mode_falls_back_when_note_missing(scrat
     job.stage_statuses["vault"] = "awaiting_confirmation"
     save_job(job, scratch_root=scratch)
 
-    config = Config(categories=[Category(id="test", name="Coaching", vault_path="Life/Sessions")])
+    config = Config(categories=[Category(id="test", name="Coaching", vault_path="Notes/Sessions")])
     monkeypatch.setattr("recalld.config.load_config", lambda path=None: config)
 
     async def fake_exists(self, vault_path):
@@ -297,7 +297,7 @@ def test_confirm_vault_write_rejects_unknown_write_mode(scratch, client, monkeyp
     job.stage_statuses["vault"] = "awaiting_confirmation"
     save_job(job, scratch_root=scratch)
 
-    config = Config(categories=[Category(id="test", name="Coaching", vault_path="Life/Sessions")])
+    config = Config(categories=[Category(id="test", name="Coaching", vault_path="Notes/Sessions")])
     monkeypatch.setattr("recalld.config.load_config", lambda path=None: config)
 
     scheduled = {}
@@ -326,7 +326,7 @@ def test_confirm_vault_write_sanitizes_traversal_in_filename(scratch, client, mo
     job.stage_statuses["vault"] = "awaiting_confirmation"
     save_job(job, scratch_root=scratch)
 
-    config = Config(categories=[Category(id="test", name="Coaching", vault_path="Life/Sessions")])
+    config = Config(categories=[Category(id="test", name="Coaching", vault_path="Notes/Sessions")])
     monkeypatch.setattr("recalld.config.load_config", lambda path=None: config)
 
     async def fake_exists(self, vault_path):
@@ -364,13 +364,13 @@ def test_open_in_obsidian_uses_full_vault_note_path(scratch, client, monkeypatch
     job.filename = "2025-04-29 Coaching.md"
     job.stage_statuses["vault"] = "done"
     save_job(job, scratch_root=scratch)
-    config = Config(vault_name="Personal", categories=[Category(id="test", name="Coaching", vault_path="Life/Sessions")])
+    config = Config(vault_name="Personal", categories=[Category(id="test", name="Coaching", vault_path="Notes/Sessions")])
     monkeypatch.setattr("recalld.config.load_config", lambda path=None: config)
 
     resp = client.get(f"/jobs/{job.id}/open-in-obsidian", follow_redirects=False)
 
     assert resp.status_code == 302
-    assert resp.headers["location"] == "obsidian://open?vault=Personal&file=Life/Sessions/2025-04-29%20Coaching.md"
+    assert resp.headers["location"] == "obsidian://open?vault=Personal&file=Notes/Sessions/2025-04-29%20Coaching.md"
 
 
 def test_job_state_returns_latest_stage_statuses(scratch, client):
@@ -426,7 +426,7 @@ def test_job_state_returns_vault_preview(scratch, client, monkeypatch):
     job.stage_statuses["postprocess"] = "done"
     job.stage_statuses["vault"] = "awaiting_confirmation"
     save_job(job, scratch_root=scratch)
-    config = Config(categories=[Category(id="test", name="Coaching", vault_path="Life/Sessions")])
+    config = Config(categories=[Category(id="test", name="Coaching", vault_path="Notes/Sessions")])
     monkeypatch.setattr("recalld.config.load_config", lambda path=None: config)
 
     resp = client.get(f"/jobs/{job.id}/state")
