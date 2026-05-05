@@ -304,7 +304,14 @@ async def confirm_vault_write(
     note_path = f"{cat.vault_path}/{note_name}"
     normalized_mode = (write_mode or "").strip().lower()
 
-    if normalized_mode not in {"overwrite", "append"}:
+    if normalized_mode and normalized_mode not in {"overwrite", "append"}:
+        return HTMLResponse("Invalid write mode", status_code=400)
+
+    if normalized_mode == "append":
+        writer = VaultWriter(cfg.obsidian_api_url, cfg.obsidian_api_key)
+        if not await writer.note_exists(note_path):
+            normalized_mode = "overwrite"
+    elif not normalized_mode:
         writer = VaultWriter(cfg.obsidian_api_url, cfg.obsidian_api_key)
         if await writer.note_exists(note_path):
             job.vault_conflict_path = note_path
