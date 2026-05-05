@@ -12,7 +12,7 @@ from recalld.jobs import DEFAULT_SCRATCH_ROOT, JobStage, JobStatus, can_restart_
 from recalld.pipeline.align import LabelledTurn
 from recalld.pipeline.postprocess import PostProcessResult
 from recalld.pipeline.vault import render_session_note_preview
-from recalld.pipeline.runner import run_pipeline
+from recalld.pipeline.runner import _normalize_note_title, run_pipeline
 from recalld.runtime import spawn_pipeline_task
 
 router = APIRouter(prefix="/jobs")
@@ -199,7 +199,6 @@ def _job_source_path(job_id: str, original_filename: str):
 
 
 async def _schedule_pipeline(request: Request, job_id: str, from_start: bool) -> HTMLResponse:
-    import asyncio
     from recalld.config import load_config
 
     job = load_job(job_id, scratch_root=DEFAULT_SCRATCH_ROOT)
@@ -213,7 +212,6 @@ async def _schedule_pipeline(request: Request, job_id: str, from_start: bool) ->
 
 
 async def _restart_from_stage(request: Request, job_id: str, stage: JobStage) -> HTMLResponse:
-    import asyncio
     from recalld.config import load_config
 
     job = load_job(job_id, scratch_root=DEFAULT_SCRATCH_ROOT)
@@ -244,7 +242,6 @@ async def restart_from_stage(request: Request, job_id: str, stage: JobStage):
 
 @router.post("/{job_id}/confirm-speakers", response_class=HTMLResponse)
 async def confirm_speakers(request: Request, job_id: str):
-    import asyncio
     from recalld.config import load_config
     from recalld.jobs import JobStage, JobStatus
 
@@ -283,7 +280,6 @@ async def confirm_vault_write(
     filename: str = Form(None),
     write_mode: str = Form(None),
 ):
-    import asyncio
     from recalld.config import load_config
     from recalld.jobs import JobStatus
     from recalld.pipeline.vault import VaultWriter
@@ -292,7 +288,9 @@ async def confirm_vault_write(
     cfg = load_config()
     cat = next((c for c in cfg.categories if c.id == job.category_id), None)
     if filename:
-        job.filename = filename
+        sanitized = _normalize_note_title(filename, job.created_at.date())
+        if sanitized:
+            job.filename = sanitized
     if not cat:
         job.status = JobStatus.failed
         job.error = "Category not found"

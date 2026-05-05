@@ -163,7 +163,8 @@ def test_confirm_vault_write_prompts_overwrite_or_append_when_note_exists(scratc
     (scratch / job.id / job.original_filename).write_bytes(b"audio")
     job.current_stage = JobStage.vault
     job.status = JobStatus.pending
-    job.filename = "2025-04-29 Coaching.md"
+    session_date = job.created_at.date()
+    job.filename = f"{session_date.isoformat()} Coaching.md"
     job.stage_statuses["vault"] = "awaiting_confirmation"
     save_job(job, scratch_root=scratch)
 
@@ -186,14 +187,14 @@ def test_confirm_vault_write_prompts_overwrite_or_append_when_note_exists(scratc
 
     resp = client.post(
         f"/jobs/{job.id}/confirm-vault-write",
-        data={"filename": "2025-04-29 Coaching.md"},
+        data={"filename": f"{session_date.isoformat()} Coaching.md"},
     )
 
     assert resp.status_code == 200
     updated = load_job(job.id, scratch_root=scratch)
     assert updated.status == JobStatus.pending
     assert updated.stage_statuses["vault"] == "awaiting_confirmation"
-    assert updated.vault_conflict_path == "Life/Sessions/2025-04-29 Coaching.md"
+    assert updated.vault_conflict_path == f"Life/Sessions/{session_date.isoformat()} Coaching.md"
     assert "Overwrite existing note" in resp.text
     assert "Append to existing note" in resp.text
     assert "coro" not in scheduled
@@ -315,6 +316,45 @@ def test_confirm_vault_write_rejects_unknown_write_mode(scratch, client, monkeyp
 
     assert resp.status_code == 400
     assert "coro" not in scheduled
+
+
+def test_confirm_vault_write_sanitizes_traversal_in_filename(scratch, client, monkeypatch):
+    job = create_job(category_id="test", original_filename="audio.m4a", scratch_root=scratch)
+    (scratch / job.id / job.original_filename).write_bytes(b"audio")
+    job.current_stage = JobStage.vault
+    job.status = JobStatus.pending
+    job.stage_statuses["vault"] = "awaiting_confirmation"
+    save_job(job, scratch_root=scratch)
+
+    config = Config(categories=[Category(id="test", name="Coaching", vault_path="Life/Sessions")])
+    monkeypatch.setattr("recalld.config.load_config", lambda path=None: config)
+
+    async def fake_exists(self, vault_path):
+        return False
+
+    monkeypatch.setattr("recalld.pipeline.vault.VaultWriter.note_exists", fake_exists)
+
+    async def fake_run_pipeline(job_arg, source_arg, cfg_arg):
+        return None
+
+    def fake_create_task(coro):
+        coro.close()
+        return None
+
+    monkeypatch.setattr("recalld.routers.jobs.run_pipeline", fake_run_pipeline)
+    monkeypatch.setattr("asyncio.create_task", fake_create_task)
+
+    resp = client.post(
+        f"/jobs/{job.id}/confirm-vault-write",
+        data={"filename": "../../etc/passwd"},
+    )
+
+    assert resp.status_code == 200
+    updated = load_job(job.id, scratch_root=scratch)
+    # Path separators must be stripped; traversal sequences must not appear in the filename
+    assert "/" not in (updated.filename or "")
+    assert "\\" not in (updated.filename or "")
+    assert ".." not in (updated.filename or "")
 
 
 def test_open_in_obsidian_uses_full_vault_note_path(scratch, client, monkeypatch):

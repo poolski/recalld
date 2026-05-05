@@ -93,12 +93,12 @@ async def test_pipeline_appends_to_existing_vault_note_when_requested(tmp_path, 
 
     with patch("recalld.pipeline.runner.VaultWriter") as MockWriter:
         writer = MockWriter.return_value
-        writer.append_note = AsyncMock()
+        writer.append_to_note = AsyncMock()
         writer.write_note = AsyncMock()
         writer.note_exists = AsyncMock(return_value=True)
         await run_pipeline(job, scratch / "session.m4a", cfg)
 
-    writer.append_note.assert_awaited_once()
+    writer.append_to_note.assert_awaited_once()
     writer.write_note.assert_not_awaited()
     reloaded = load_job(job.id, scratch_root=tmp_path)
     assert reloaded.status == JobStatus.complete
@@ -238,3 +238,25 @@ async def test_pipeline_falls_back_to_default_name_when_inference_fails(tmp_path
 
     reloaded = load_job(job.id, scratch_root=tmp_path)
     assert reloaded.filename.endswith("Coaching.md")
+
+
+@pytest.mark.asyncio
+async def test_pipeline_marks_job_pending_on_cancellation(tmp_path, monkeypatch):
+    import asyncio
+    monkeypatch.setattr("recalld.pipeline.runner.DEFAULT_SCRATCH_ROOT", tmp_path)
+
+    job = create_job(category_id="cat-1", original_filename="session.m4a", scratch_root=tmp_path)
+    job.status = JobStatus.running
+    job.current_stage = JobStage.ingest
+    save_job(job, scratch_root=tmp_path)
+
+    cfg = Config(llm_model="test-model", categories=[])
+
+    async def _raise_cancelled(*args, **kwargs):
+        raise asyncio.CancelledError()
+
+    with patch("recalld.pipeline.runner.asyncio.to_thread", side_effect=_raise_cancelled):
+        await run_pipeline(job, tmp_path / job.id / "session.m4a", cfg)
+
+    reloaded = load_job(job.id, scratch_root=tmp_path)
+    assert reloaded.status == JobStatus.pending

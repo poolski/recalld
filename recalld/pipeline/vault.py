@@ -138,17 +138,6 @@ class VaultWriter:
             if resp.status_code >= 400:
                 raise VaultWriteError(f"Obsidian API error {resp.status_code}: {resp.text}")
 
-    async def append_note(self, vault_path: str, filename: str, content: str) -> None:
-        encoded = quote(f"{vault_path}/{filename}", safe="/")
-        url = f"{self.api_url}/vault/{encoded}"
-        async with httpx.AsyncClient(verify=False, timeout=15.0) as client:
-            resp = await client.patch(url, content=content.encode(), headers={
-                **self._headers(),
-                "Content-Type": "text/markdown",
-            })
-            if resp.status_code >= 400:
-                raise VaultWriteError(f"Obsidian API error {resp.status_code}: {resp.text}")
-
     async def note_exists(self, vault_path: str) -> bool:
         encoded = quote(vault_path, safe="/")
         url = f"{self.api_url}/vault/{encoded}"

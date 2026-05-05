@@ -120,7 +120,8 @@ async def _infer_note_title_with_llm(job: Job, cfg: Config, category_name: str, 
     )
     client = LLMClient(base_url=cfg.llm_base_url, model=cfg.llm_model)
     raw = await client.complete(system, user)
-    return _normalize_note_title(raw, session_date)
+    first_line = next((line.strip() for line in raw.splitlines() if line.strip()), "")
+    return _normalize_note_title(first_line, session_date)
 
 
 async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
@@ -368,7 +369,7 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
             try:
                 mode = (job.vault_write_mode or "overwrite").lower()
                 if mode == "append":
-                    await writer.append_note(cat.vault_path, filename, "\n\n" + note_content)
+                    await writer.append_to_note(f"{cat.vault_path}/{filename}", "\n\n" + note_content)
                 else:
                     await writer.write_note(cat.vault_path, filename, note_content)
             except Exception as e:
@@ -402,7 +403,10 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
                   focus_points=result.focus_points if result else [])
 
     except asyncio.CancelledError:
-        # Expected during application shutdown (e.g., Ctrl+C). Treat as clean exit.
+        # Expected during application shutdown (e.g., Ctrl+C). Mark the job as
+        # pending so it can be resumed after restart rather than staying "running".
+        job.status = JobStatus.pending
+        _save(job)
         return
     except Exception as e:
         job.status = JobStatus.failed

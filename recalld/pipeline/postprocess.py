@@ -143,7 +143,7 @@ def _sanitize_style_profile(text: str) -> str:
 
 async def _build_style_profile(client: LLMClient, turns: list[LabelledTurn], speaker_a_name: str) -> str:
     sample = _sample_style_window(turns, speaker_a_name=speaker_a_name, seconds=60.0)
-    if not sample:
+    if not sample or estimate_tokens(sample) < 30:
         return DEFAULT_STYLE_PROFILE
     user = (
         "Transcript style sample (about one minute):\n"
