@@ -8,7 +8,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Stre
 
 from recalld.app import templates
 from recalld.events import bus
-from recalld.jobs import DEFAULT_SCRATCH_ROOT, JobStage, can_restart_from_stage, delete_job, load_job, reset_job_for_rerun, save_job
+from recalld.jobs import DEFAULT_SCRATCH_ROOT, JobStage, JobStatus, can_restart_from_stage, delete_job, load_job, reset_job_for_rerun, save_job
 from recalld.pipeline.align import LabelledTurn
 from recalld.pipeline.postprocess import PostProcessResult
 from recalld.pipeline.vault import render_session_note_preview
@@ -204,7 +204,7 @@ async def _schedule_pipeline(request: Request, job_id: str, from_start: bool) ->
 
     job = load_job(job_id, scratch_root=DEFAULT_SCRATCH_ROOT)
     reset_job_for_rerun(job, from_start=from_start)
-    job.status = job.status.running
+    job.status = JobStatus.running
     _save_job(job)
     cfg = load_config()
     source = _job_source_path(job.id, job.original_filename)
@@ -219,7 +219,7 @@ async def _restart_from_stage(request: Request, job_id: str, stage: JobStage) ->
     job = load_job(job_id, scratch_root=DEFAULT_SCRATCH_ROOT)
     if can_restart_from_stage(job, stage):
         reset_job_for_rerun(job, from_start=False, restart_stage=stage)
-    job.status = job.status.running
+    job.status = JobStatus.running
     _save_job(job)
     cfg = load_config()
     source = _job_source_path(job.id, job.original_filename)
