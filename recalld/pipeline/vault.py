@@ -120,6 +120,30 @@ class VaultWriter:
         encoded = quote(f"{vault_path}/{filename}", safe="/")
         url = f"{self.api_url}/vault/{encoded}"
         async with httpx.AsyncClient(verify=False, timeout=15.0) as client:
+            resp = await client.put(url, content=content.encode(), headers={
+                **self._headers(),
+                "Content-Type": "text/markdown",
+            })
+            if resp.status_code >= 400:
+                raise VaultWriteError(f"Obsidian API error {resp.status_code}: {resp.text}")
+
+    async def patch_heading(self, vault_path: str, heading: str, content: str) -> None:
+        encoded = quote(vault_path, safe="/")
+        heading_encoded = quote(heading, safe="")
+        url = f"{self.api_url}/vault/{encoded}/heading/{heading_encoded}"
+        async with httpx.AsyncClient(verify=False, timeout=15.0) as client:
+            resp = await client.put(url, content=content.encode(), headers={
+                **self._headers(),
+                "Content-Type": "text/markdown",
+            })
+            if resp.status_code >= 400:
+                raise VaultWriteError(f"Obsidian API error {resp.status_code}: {resp.text}")
+
+    async def append_to_heading(self, vault_path: str, heading: str, content: str) -> None:
+        encoded = quote(vault_path, safe="/")
+        heading_encoded = quote(heading, safe="")
+        url = f"{self.api_url}/vault/{encoded}/heading/{heading_encoded}"
+        async with httpx.AsyncClient(verify=False, timeout=15.0) as client:
             resp = await client.post(url, content=content.encode(), headers={
                 **self._headers(),
                 "Content-Type": "text/markdown",
@@ -137,6 +161,30 @@ class VaultWriter:
             })
             if resp.status_code >= 400:
                 raise VaultWriteError(f"Obsidian API error {resp.status_code}: {resp.text}")
+
+    async def read_note(self, vault_path: str) -> str:
+        encoded = quote(vault_path, safe="/")
+        url = f"{self.api_url}/vault/{encoded}"
+        async with httpx.AsyncClient(verify=False, timeout=15.0) as client:
+            resp = await client.get(url, headers=self._headers())
+            if resp.status_code == 404:
+                return ""
+            if resp.status_code >= 400:
+                raise VaultWriteError(f"Obsidian API error {resp.status_code}: {resp.text}")
+            return resp.text
+
+    async def list_directory(self, vault_path: str) -> list[str]:
+        encoded = quote(vault_path, safe="/")
+        url = f"{self.api_url}/vault/{encoded}/"
+        async with httpx.AsyncClient(verify=False, timeout=15.0) as client:
+            resp = await client.get(url, headers=self._headers())
+            if resp.status_code == 404:
+                return []
+            if resp.status_code >= 400:
+                raise VaultWriteError(f"Obsidian API error {resp.status_code}: {resp.text}")
+            data = resp.json()
+            files = data.get("files", [])
+            return [str(item) for item in files if isinstance(item, str)]
 
     async def note_exists(self, vault_path: str) -> bool:
         encoded = quote(vault_path, safe="/")

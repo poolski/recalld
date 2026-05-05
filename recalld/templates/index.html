@@ -46,9 +46,17 @@
         </select>
       </div>
 
-      <div class="field">
-        <label for="note_title">Note title (optional)</label>
-        <input type="text" id="note_title" name="note_title" placeholder="e.g. 2026-04-29 Session.md">
+      <div
+        id="note-target-control"
+        hx-get="/upload/note-target"
+        hx-trigger="load, change from:#category_id"
+        hx-include="#category_id"
+        hx-swap="outerHTML"
+      >
+        <div class="field">
+          <label>Note target</label>
+          <p class="hint">Choose a category to load the matching note target.</p>
+        </div>
       </div>
 
       <button type="submit" style="margin-top:8px">Process recording</button>

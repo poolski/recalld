@@ -1,0 +1,24 @@
+<div
+  id="note-target-control"
+  hx-get="/upload/note-target"
+  hx-trigger="change from:#category_id"
+  hx-include="#category_id"
+  hx-swap="outerHTML"
+>
+  <div class="field">
+    <label for="note-target">Note target</label>
+    <select name="note_target" id="note-target">
+      <option value="new" selected>Create new note: {{ note_title }}</option>
+      {% for note in note_candidates %}
+      <option value="{{ note.path }}">Use existing note: {{ note.name }}</option>
+      {% endfor %}
+    </select>
+    <p class="hint" style="margin-top:6px">
+      {% if note_candidates %}
+      Existing notes are limited to <code>{{ category.vault_path }}</code>.
+      {% else %}
+      No matching existing notes found in <code>{{ category.vault_path }}</code>.
+      {% endif %}
+    </p>
+  </div>
+</div>

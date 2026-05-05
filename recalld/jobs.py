@@ -93,6 +93,8 @@ class Job(BaseModel):
     topic_count: Optional[int] = None
     chunk_strategy: Optional[str] = None
     filename: Optional[str] = None
+    note_target_mode: Optional[str] = None
+    note_target_path: Optional[str] = None
     vault_write_mode: Optional[str] = None
     vault_conflict_path: Optional[str] = None
 

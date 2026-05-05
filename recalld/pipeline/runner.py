@@ -75,14 +75,12 @@ def _build_speaker_map(raw_turns, speaker_a: str, speaker_b: str) -> dict[str, s
     for turn in raw_turns:
         if turn.speaker not in speakers:
             speakers.append(turn.speaker)
-        if len(speakers) == 2:
-            break
 
     speaker_map: dict[str, str] = {}
     if speakers:
         speaker_map[speakers[0]] = speaker_a
-    if len(speakers) > 1:
-        speaker_map[speakers[1]] = speaker_b
+    for speaker in speakers[1:]:
+        speaker_map[speaker] = speaker_b
     return speaker_map
 
 
@@ -101,6 +99,34 @@ def _normalize_note_title(title: str, session_date) -> str:
     if not cleaned.startswith(session_date.isoformat()):
         cleaned = f"{session_date.isoformat()} {cleaned}".strip()
     return f"{cleaned}.md"
+
+
+def _split_rendered_note_sections(markdown: str) -> list[tuple[str, str]]:
+    content = markdown
+    if content.startswith("---\n"):
+        parts = content.split("\n---\n", 1)
+        if len(parts) == 2:
+            content = parts[1].lstrip()
+
+    sections: list[tuple[str, str]] = []
+    heading: str | None = None
+    lines: list[str] = []
+
+    for line in content.splitlines():
+        match = re.match(r"^(#{1,6})\s+(.+)$", line)
+        if match:
+            if heading is not None:
+                sections.append((heading, "\n".join(lines).strip()))
+            heading = match.group(2).strip()
+            lines = []
+            continue
+        if heading is not None:
+            lines.append(line)
+
+    if heading is not None:
+        sections.append((heading, "\n".join(lines).strip()))
+
+    return sections
 
 
 async def _infer_note_title_with_llm(job: Job, cfg: Config, category_name: str, vault_path: str, labelled) -> str:
@@ -179,7 +205,12 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
             _emit(job, "diarise", "running")
             import json
             try:
-                turns = await asyncio.to_thread(diarise, Path(job.wav_path), cfg.huggingface_token)
+                turns = await asyncio.to_thread(
+                    diarise,
+                    Path(job.wav_path),
+                    cfg.huggingface_token,
+                    progress_cb=lambda msg: _emit(job, "diarise", "running", msg),
+                )
             except DiariseError as e:
                 # Offer to continue with unlabelled transcript
                 job.status = JobStatus.failed
@@ -246,6 +277,16 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
             cat = next((c for c in cfg.categories if c.id == job.category_id), None)
             speaker_a_name = cat.speaker_a if cat else "You"
             speaker_b_name = cat.speaker_b if cat else "Speaker 2"
+            existing_note_content = ""
+            existing_note_path = ""
+            if cat and job.note_target_mode == "existing":
+                existing_note_path = job.note_target_path or (f"{cat.vault_path}/{job.filename}" if job.filename else "")
+            if cat and existing_note_path:
+                writer = VaultWriter(cfg.obsidian_api_url, cfg.obsidian_api_key)
+                try:
+                    existing_note_content = await writer.read_note(existing_note_path)
+                except Exception:
+                    existing_note_content = ""
 
             ctx_len = await ensure_loaded_context_length(cfg.llm_base_url, cfg.llm_model)
             budget = token_budget(ctx_len, cfg.llm_context_headroom)
@@ -261,6 +302,7 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
                     event_cb=lambda event_type, data: _emit_lmstudio_event(job, event_type, data),
                     speaker_a_name=speaker_a_name,
                     speaker_b_name=speaker_b_name,
+                    existing_note_content=existing_note_content,
                 )
             except Exception as e:
                 job.status = JobStatus.failed
@@ -291,6 +333,7 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
                 else:
                     session_date = job.created_at.date()
                     job.filename = f"{session_date.isoformat()} {cat.name}.md"
+                job.note_target_path = f"{cat.vault_path}/{job.filename}"
 
             _set_stage_status(job, "postprocess", "done")
             job.current_stage = JobStage.vault
@@ -358,6 +401,7 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
             writer = VaultWriter(cfg.obsidian_api_url, cfg.obsidian_api_key)
             session_date = job.created_at.date()
             filename = job.filename or f"{session_date.isoformat()} {cat.name}.md"
+            note_path = job.note_target_path or f"{cat.vault_path}/{filename}"
             note_content = render_session_note(
                 session_date=session_date,
                 category=cat.name,
@@ -369,9 +413,21 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
             try:
                 mode = (job.vault_write_mode or "overwrite").lower()
                 if mode == "append":
-                    await writer.append_to_note(f"{cat.vault_path}/{filename}", "\n\n" + note_content)
+                    existing_note_content = ""
+                    try:
+                        existing_note_content = await writer.read_note(note_path)
+                    except Exception:
+                        existing_note_content = ""
+
+                    if existing_note_content:
+                        note_dir, note_name = note_path.rsplit("/", 1)
+                        await writer.write_note(note_dir, note_name, note_content)
+                    else:
+                        note_dir, note_name = note_path.rsplit("/", 1)
+                        await writer.write_note(note_dir, note_name, note_content)
                 else:
-                    await writer.write_note(cat.vault_path, filename, note_content)
+                    note_dir, note_name = note_path.rsplit("/", 1)
+                    await writer.write_note(note_dir, note_name, note_content)
             except Exception as e:
                 job.status = JobStatus.failed
                 job.error = str(e)
