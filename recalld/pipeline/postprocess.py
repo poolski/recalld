@@ -16,22 +16,38 @@ You are a session notes assistant. Given a transcript, produce:
    - Refer to {speaker_a_name} as "you" and {speaker_b_name} by name.
    - Prioritize concrete facts and discussion details over narrative filler.
    - Cover the discussion in detail, proportional to transcript depth and duration.
+   - For a blank slate, organize the summary into a few thematic sections rather than a single chronological block.
+   - Group related ideas together even when they are not chronologically adjacent.
    - Extract specific topics discussed, concrete suggestions made, decisions reached, and open questions.
    - Include only what is stated in the transcript; do not infer facts or inject opinions.
    - Follow the provided style profile closely for wording, cadence, and register.
    - The style profile controls phrasing only; it must not change or add facts.
+   - Use a direct, pragmatic, no-fluff style.
    - If style guidance conflicts with transcript fidelity, transcript fidelity wins.
+   - If existing note content is provided, preserve its headings, sections, and in-progress thoughts.
+   - Continue existing sections where relevant instead of flattening or replacing the document structure.
+   - Preserve the existing headings, but add new headings when the transcript introduces distinct themes or when a split would improve clarity.
+   - Preserve the overall markdown structure, including heading order and section boundaries.
+   - You may expand or reword text within a section inline, but do not flatten or reorder the note.
+   - If the transcript introduces a distinct topic or subtopic, add a new heading for it when helpful.
+   - Existing headings should remain, but they do not need to stay verbatim if the transcript adds detail.
+   - Preserve links, embeds, and link targets in existing note content.
+   - If surrounding text is rewritten inline, keep links and embeds in a context that still makes sense.
+   - Add other relevant discussion points under their own headings when the existing note does not already cover them.
+   - Expand numbered and bulleted lists when the transcript supports more detail; do not preserve lists verbatim just because they already exist.
    - Separate distinct themes into their own paragraphs.
    - Paragraphs must be separated by blank lines.
    - Do not use any other headings or formatting.
 2. A short list of focus points or action items under "## Focus" using markdown checkboxes (- [ ] item)
    - Include only actions or follow-ups grounded in the transcript.
+   - Use an instructive, actionable tone for focus points, without being overly formal or verbose.
 Write clearly. Do not add extra headings, advice, or commentary outside transcript-grounded summarization."""
 
 MAP_SYSTEM_PROMPT = """\
 You are summarising one section of a longer session transcript.
 Extract concrete details: topics discussed, suggestions made, decisions, and open follow-ups.
 Use only transcript-grounded facts, with no opinions or invented details.
+Use a direct, pragmatic, no-fluff style.
 Align phrasing with the provided style profile when present.
 Style controls wording only; do not add or alter facts.
 Format: plain prose, no headings."""
@@ -43,18 +59,33 @@ Produce:
    - Refer to {speaker_a_name} as "you" and {speaker_b_name} by name.
    - Prioritize concrete facts and discussion details over narrative filler.
    - Preserve detailed factual coverage from the partial summaries.
+   - For a blank slate, organize the summary into a few thematic sections rather than a single chronological block.
+   - Group related ideas together even when they are not chronologically adjacent.
    - Extract specific topics, concrete suggestions, decisions, and open follow-ups.
    - Include only what is evidenced in the summaries; do not add opinions or inferred facts.
+   - Use a direct, pragmatic, no-fluff style.
    - Follow the provided style profile closely for wording, cadence, and register.
    - The style profile controls phrasing only; it must not change or add facts.
    - If style guidance conflicts with factual fidelity, factual fidelity wins.
+   - If existing note content is provided, preserve its headings, sections, and in-progress thoughts.
+   - Continue existing sections where relevant instead of flattening or replacing the document structure.
+   - Preserve the existing headings, but add new headings when the transcript introduces distinct themes or when a split would improve clarity.
+   - Preserve the overall markdown structure, including heading order and section boundaries.
+   - You may expand or reword text within a section inline, but do not flatten or reorder the note.
+   - If the transcript introduces a distinct topic or subtopic, add a new heading for it when helpful.
+   - Existing headings should remain, but they do not need to stay verbatim if the transcript adds detail.
+   - Preserve links, embeds, and link targets in existing note content.
+   - If surrounding text is rewritten inline, keep links and embeds in a context that still makes sense.
+   - Add other relevant discussion points under their own headings when the existing note does not already cover them.
+   - Expand numbered and bulleted lists when the transcript supports more detail; do not preserve lists verbatim just because they already exist.
    - Separate distinct themes into their own paragraphs.
    - Paragraphs MUST be separated by blank lines.
    - Do not use any other headings or formatting.
 2. A focused list of action items under "## Focus" using markdown checkboxes (- [ ] item), grounded only in the summaries."""
 
 STYLE_ANALYSIS_SYSTEM_PROMPT = """\
-You extract writing style characteristics from a transcript sample.
+You extract writing style characteristics from a transcript sample between two people, {speaker_a_name} and {speaker_b_name}.
+Use only one speaker's turns from the sample; do not blend both speakers into a single style profile.
 Return 3-5 short bullet points describing voice/style only:
 - directness and tone
 - sentence length and pacing
@@ -86,15 +117,14 @@ def parse_focus_points(markdown: str) -> list[str]:
 
 
 def parse_summary(markdown: str) -> str:
-    """Extract content after ## Summary, excluding following headings if present."""
+    """Extract content after ## Summary, excluding the focus section if present."""
     marker = "## Summary"
     if marker in markdown:
         parts = markdown.split(marker, 1)
         content = parts[1].lstrip()
-        # Look for next heading to stop at
-        next_heading = content.find("\n##")
-        if next_heading != -1:
-            return content[:next_heading].strip()
+        focus_heading = re.search(r"^##\s+Focus\b", content, re.MULTILINE)
+        if focus_heading:
+            return content[:focus_heading.start()].strip()
         return content.strip()
     return markdown.strip()
 
@@ -104,16 +134,68 @@ def _turns_to_text(turns: list[LabelledTurn]) -> str:
 
 
 def _single_system_prompt(speaker_a_name: str, speaker_b_name: str) -> str:
-    return SYSTEM_PROMPT_TEMPLATE.format(speaker_a_name=speaker_a_name, speaker_b_name=speaker_b_name)
+    return SYSTEM_PROMPT_TEMPLATE.format(
+        speaker_a_name=speaker_a_name, speaker_b_name=speaker_b_name
+    )
 
 
 def _reduce_system_prompt(speaker_a_name: str, speaker_b_name: str) -> str:
-    return REDUCE_SYSTEM_PROMPT_TEMPLATE.format(speaker_a_name=speaker_a_name, speaker_b_name=speaker_b_name)
+    return REDUCE_SYSTEM_PROMPT_TEMPLATE.format(
+        speaker_a_name=speaker_a_name, speaker_b_name=speaker_b_name
+    )
 
 
-def _sample_style_window(turns: list[LabelledTurn], speaker_a_name: str, seconds: float = 60.0) -> str:
-    speaker_turns = [t for t in turns if t.speaker.strip().lower() == speaker_a_name.strip().lower()]
-    source = speaker_turns if speaker_turns else turns
+def _extract_markdown_headings(text: str) -> list[str]:
+    return [
+        match.group(1).strip()
+        for match in re.finditer(r"^#{1,6}\s+(.+)$", text, re.MULTILINE)
+    ]
+
+
+def _find_followup_heading(text: str) -> str | None:
+    followup_markers = (
+        "focus",
+        "for next time",
+        "next steps",
+        "next step",
+        "next time",
+        "action items",
+        "follow-up",
+        "follow up",
+        "to do",
+        "todo",
+    )
+    for heading in _extract_markdown_headings(text):
+        normalized = heading.lower()
+        if any(marker in normalized for marker in followup_markers):
+            return heading
+    return None
+
+
+def _style_sample_turns(turns: list[LabelledTurn], speaker_a_name: str) -> list[LabelledTurn]:
+    preferred_label = speaker_a_name.strip().lower()
+    preferred_turns = [t for t in turns if t.speaker.strip().lower() == preferred_label]
+    if preferred_turns:
+        return preferred_turns
+    if not turns:
+        return []
+
+    counts: dict[str, int] = {}
+    first_seen: dict[str, int] = {}
+    for index, turn in enumerate(turns):
+        label = turn.speaker.strip().lower()
+        counts[label] = counts.get(label, 0) + 1
+        if label not in first_seen:
+            first_seen[label] = index
+
+    chosen_label = max(counts, key=lambda label: (counts[label], -first_seen[label]))
+    return [t for t in turns if t.speaker.strip().lower() == chosen_label]
+
+
+def _sample_style_window(
+    turns: list[LabelledTurn], speaker_a_name: str, seconds: float = 60.0
+) -> str:
+    source = _style_sample_turns(turns, speaker_a_name)
     if not source:
         return ""
     start = source[0].start
@@ -141,7 +223,9 @@ def _sanitize_style_profile(text: str) -> str:
     return "\n".join(bullet_lines) if bullet_lines else DEFAULT_STYLE_PROFILE
 
 
-async def _build_style_profile(client: LLMClient, turns: list[LabelledTurn], speaker_a_name: str) -> str:
+async def _build_style_profile(
+    client: LLMClient, turns: list[LabelledTurn], speaker_a_name: str
+) -> str:
     sample = _sample_style_window(turns, speaker_a_name=speaker_a_name, seconds=60.0)
     if not sample or estimate_tokens(sample) < 30:
         return DEFAULT_STYLE_PROFILE
@@ -164,6 +248,35 @@ def _effective_transcript_budget(token_budget: int, *prompts: str) -> int:
     return max(1, token_budget - prompt_tokens - safety_reserve)
 
 
+def _note_scaffold_block(existing_note_content: str) -> str:
+    scaffold = (existing_note_content or "").strip()
+    if not scaffold:
+        return ""
+    followup_heading = _find_followup_heading(scaffold)
+    followup_block = ""
+    if followup_heading:
+        followup_block = (
+            "\n\nExisting follow-up-style heading detected:\n"
+            f"## {followup_heading}\n"
+            "Expand it with more detail and transcript-backed action items instead of "
+            "creating a separate ## Focus heading."
+        )
+    return (
+        "\n\nExisting note content to expand:\n"
+        f"{scaffold}\n\n"
+        "Expand shorthand sections with transcript-grounded detail.\n"
+        "Preserve the note's overview and retain relevant existing headings.\n"
+        "Preserve existing headings, sections, and in-progress thoughts.\n"
+        "Preserve the overall markdown structure, including heading order and section boundaries.\n"
+        "You may expand or reword text within a section inline, but do not flatten or reorder the note.\n"
+        "Preserve links, embeds, and link targets in existing note content.\n"
+        "If surrounding text is rewritten inline, keep links and embeds in a context that still makes sense.\n"
+        "Continue existing sections where relevant instead of flattening the document.\n"
+        "Add transcript-backed details and new relevant subjects where helpful."
+        f"{followup_block}"
+    )
+
+
 async def postprocess(
     turns: list[LabelledTurn],
     llm_base_url: str,
@@ -174,27 +287,37 @@ async def postprocess(
     event_cb: Optional[Callable[[str, dict], None]] = None,
     speaker_a_name: str = "You",
     speaker_b_name: str = "Speaker 2",
+    existing_note_content: str = "",
 ) -> PostProcessResult:
     client = LLMClient(base_url=llm_base_url, model=llm_model)
     if progress_cb:
         progress_cb("Detecting style from transcript sample.")
-    style_profile = await _build_style_profile(client, turns=turns, speaker_a_name=speaker_a_name)
+    style_profile = await _build_style_profile(
+        client, turns=turns, speaker_a_name=speaker_a_name
+    )
     style_block = f"\n\nStyle profile (from transcript sample):\n{style_profile}\n"
-    single_prompt = _single_system_prompt(speaker_a_name, speaker_b_name) + style_block
-    reduce_prompt = _reduce_system_prompt(speaker_a_name, speaker_b_name) + style_block
+    scaffold_block = _note_scaffold_block(existing_note_content)
+    single_prompt = _single_system_prompt(speaker_a_name, speaker_b_name) + style_block + scaffold_block
+    reduce_prompt = _reduce_system_prompt(speaker_a_name, speaker_b_name) + style_block + scaffold_block
     if progress_cb:
         progress_cb("Calculating context budget for summarization.")
-    effective_budget = _effective_transcript_budget(token_budget, single_prompt, reduce_prompt)
+    effective_budget = _effective_transcript_budget(
+        token_budget, single_prompt, reduce_prompt
+    )
     if progress_cb:
         progress_cb("Selecting summarization strategy.")
     strategy = chunk_transcript(turns, token_budget=effective_budget)
 
     if strategy.strategy == "single":
         if progress_cb:
-            progress_cb("Chunking strategy: single-pass summary (no transcript chunk splitting).")
+            progress_cb(
+                "Chunking strategy: single-pass summary (no transcript chunk splitting)."
+            )
         transcript_text = _turns_to_text(turns)
         raw = ""
-        async for token in client.stream(single_prompt, transcript_text, event_cb=event_cb):
+        async for token in client.stream(
+            single_prompt, transcript_text, event_cb=event_cb
+        ):
             raw += token
             if stream_cb:
                 stream_cb(parse_summary(raw))
