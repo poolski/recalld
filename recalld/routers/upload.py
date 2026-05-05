@@ -10,7 +10,7 @@ from fastapi.responses import HTMLResponse
 from recalld.app import templates
 from recalld.config import DEFAULT_CONFIG_PATH, load_config, save_config
 from recalld.jobs import DEFAULT_SCRATCH_ROOT, JobStatus, create_job, list_incomplete_jobs, list_jobs
-from recalld.pipeline.runner import run_pipeline
+from recalld.pipeline.runner import _normalize_note_title, run_pipeline
 from recalld.runtime import spawn_pipeline_task
 
 router = APIRouter()
@@ -58,13 +58,9 @@ async def upload(
         original_filename=file.filename,
         scratch_root=DEFAULT_SCRATCH_ROOT,
     )
-    cleaned_note_title = " ".join(note_title.split()).strip()
-    if cleaned_note_title:
-        if cleaned_note_title.lower().endswith(".md"):
-            cleaned_note_title = cleaned_note_title[:-3].strip()
-        if not cleaned_note_title.startswith(job.created_at.date().isoformat()):
-            cleaned_note_title = f"{job.created_at.date().isoformat()} {cleaned_note_title}".strip()
-        job.filename = f"{cleaned_note_title}.md"
+    normalized_note_title = _normalize_note_title(note_title, job.created_at.date())
+    if normalized_note_title:
+        job.filename = normalized_note_title
         from recalld.jobs import save_job
         save_job(job, scratch_root=DEFAULT_SCRATCH_ROOT)
 

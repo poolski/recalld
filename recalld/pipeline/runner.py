@@ -93,6 +93,11 @@ def _normalize_note_title(title: str, session_date) -> str:
         return ""
     if cleaned.lower().endswith(".md"):
         cleaned = cleaned[:-3].rstrip()
+    while ".." in cleaned:
+        cleaned = cleaned.replace("..", ".")
+    cleaned = cleaned.strip(" .-_")
+    if not cleaned:
+        return ""
     if not cleaned.startswith(session_date.isoformat()):
         cleaned = f"{session_date.isoformat()} {cleaned}".strip()
     return f"{cleaned}.md"
