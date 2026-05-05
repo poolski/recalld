@@ -1,5 +1,13 @@
 {% extends "base.html" %}
 {% block content %}
+{% set stage_labels = {
+  "ingest": "Ingest",
+  "transcribe": "Transcribe",
+  "diarise": "Detect speakers",
+  "align": "Confirm speakers",
+  "postprocess": "Summarise",
+  "vault": "Send to Obsidian"
+} %}
 <h1>Processing: {{ job.original_filename }}</h1>
 
 <div class="card">
@@ -11,10 +19,14 @@
     <div role="button" tabindex="0" class="stage-toggle{% if expanded %} expanded{% endif %}" aria-expanded="{{ 'true' if expanded else 'false' }}"
       onclick="toggleStage('{{ stage }}')">
       <span class="stage-chevron" aria-hidden="true"></span>
-      <span class="stage-name">{{ stage | capitalize }}</span>
+      <span class="stage-name">{{ stage_labels.get(stage, stage | capitalize) }}</span>
+      <span class="stage-running-indicator" id="stage-running-{{ stage }}" style="display:none">
+        <span class="spinner" aria-hidden="true"></span>
+        <span>Running…</span>
+      </span>
       <span class="stage-msg" aria-hidden="true"></span>
       <button type="button" class="btn-ghost row-restart-btn"
-        onclick="event.stopPropagation(); clearStageResults('{{ stage }}'); if('{{ stage }}' === 'ingest' || '{{ stage }}' === 'transcribe' || '{{ stage }}' === 'diarise') clearStageResults('align');"
+        onclick="event.stopPropagation(); resetPipelineFromStage('{{ stage }}');"
         hx-post="/jobs/{{ job.id }}/restart-from/{{ stage }}" hx-swap="none"
         title="Restart from {{ stage }}">
         ↻
@@ -24,7 +36,7 @@
     <div class="stage-body" id="stage-body-{{ stage }}"{% if not expanded %} hidden{% endif %}>
       {% if stage == "diarise" %}
       <button id="diarise-skip-btn" style="display:none; margin-top:12px" class="btn-ghost"
-        onclick="clearStageResults('align'); clearStageResults('postprocess')"
+        onclick="resetPipelineFromStage('align')"
         hx-post="/jobs/{{ job.id }}/skip-diarise" hx-swap="none">
         Continue without diarisation
       </button>
@@ -33,7 +45,7 @@
       <div id="speaker-confirm-controls" style="{% if stage_status == 'awaiting_confirmation' %}display:flex{% else %}display:none{% endif %}; margin-top:12px; gap:12px; flex-wrap:wrap">
         <button id="speaker-confirm-btn" class="btn"
           {% if stage_status != "awaiting_confirmation" %}disabled{% endif %}
-          onclick="clearStageResults('postprocess')"
+          onclick="resetPipelineFromStage('postprocess')"
           hx-post="/jobs/{{ job.id }}/confirm-speakers" hx-swap="none">
           Confirm speakers
         </button>
@@ -104,7 +116,7 @@
 </div>
 
 <div style="display:flex; gap:12px; margin-top:12px; flex-wrap:wrap">
-  <button class="btn-ghost" onclick="clearStageResults('align'); clearStageResults('postprocess')" hx-post="/jobs/{{ job.id }}/rerun-from-start" hx-swap="none">
+  <button class="btn-ghost" onclick="resetPipelineFromStage('ingest')" hx-post="/jobs/{{ job.id }}/rerun-from-start" hx-swap="none">
     Restart
   </button>
 </div>

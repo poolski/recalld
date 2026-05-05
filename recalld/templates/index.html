@@ -1,5 +1,13 @@
 {% extends "base.html" %}
 {% block content %}
+{% set stage_labels = {
+  "ingest": "Ingest",
+  "transcribe": "Transcribe",
+  "diarise": "Diarise",
+  "align": "Align",
+  "postprocess": "Summarise",
+  "vault": "Send to Obsidian"
+} %}
 <section class="page-head">
   <h1>Conversation Processing</h1>
   <p>Upload recordings, track each pipeline stage, and quickly resolve jobs that need action.</p>
@@ -62,7 +70,7 @@
       {% for job in incomplete_jobs[:6] %}
       <li>
         <a href="/jobs/{{ job.id }}">{{ job.original_filename }}</a>
-        <span>{{ job.current_stage.value }}</span>
+        <span>{{ stage_labels.get(job.current_stage.value, job.current_stage.value) }}</span>
       </li>
       {% endfor %}
     </ul>
@@ -103,7 +111,7 @@
             <td class="file-cell"><a href="/jobs/{{ job.id }}">{{ job.original_filename }}</a></td>
             <td>{{ category.name if category else job.category_id }}</td>
             <td>{{ job.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
-            <td><span class="stage-pill">{{ job.current_stage.value }}</span></td>
+            <td><span class="stage-pill">{{ stage_labels.get(job.current_stage.value, job.current_stage.value) }}</span></td>
             <td>
               {% if awaiting %}
               <span class="status-badge awaiting">awaiting confirmation</span>
@@ -135,7 +143,7 @@
       <dt>Category</dt>
       <dd>{{ selected_category.name if selected_category else selected_job.category_id }}</dd>
       <dt>Current stage</dt>
-      <dd>{{ selected_job.current_stage.value }}</dd>
+      <dd>{{ stage_labels.get(selected_job.current_stage.value, selected_job.current_stage.value) }}</dd>
       <dt>Status</dt>
       <dd>{{ selected_job.status.value }}</dd>
       <dt>Created</dt>
@@ -153,7 +161,7 @@
       <a href="/jobs/{{ selected_job.id }}" class="btn">View details</a>
       <button type="button" class="btn-ghost"
         hx-post="/jobs/{{ selected_job.id }}/restart-from/{{ selected_job.current_stage.value }}" hx-swap="none">
-        Restart from {{ selected_job.current_stage.value }}
+        Restart from {{ stage_labels.get(selected_job.current_stage.value, selected_job.current_stage.value) }}
       </button>
       {% if selected_job.stage_statuses.get("align") == "awaiting_confirmation" %}
       <a href="/jobs/{{ selected_job.id }}" class="btn-ghost">Confirm speakers</a>

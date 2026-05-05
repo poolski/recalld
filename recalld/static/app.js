@@ -261,6 +261,7 @@ function updateStage(stage, status, message) {
     pill.textContent = status.replaceAll("_", " ");
     pill.className = `stage-pill status-${status}`;
   }
+  updateStageRunningIndicator(stage, status);
   if (status !== "awaiting_confirmation") disableStageConfirmation(stage);
   if (msg) msg.textContent = "";
 
@@ -295,6 +296,27 @@ function clearStageResults(stage) {
       previewEl.style.display = "none";
     }
   }
+}
+
+const STAGE_ORDER = ["ingest", "transcribe", "diarise", "align", "postprocess", "vault"];
+
+function resetPipelineFromStage(stage) {
+  const startIndex = STAGE_ORDER.indexOf(stage);
+  if (startIndex === -1) return;
+
+  for (let i = startIndex; i < STAGE_ORDER.length; i += 1) {
+    const s = STAGE_ORDER[i];
+    updateStage(s, "pending", "");
+    clearStageResults(s);
+    clearStageLog(s);
+    disableStageConfirmation(s);
+  }
+}
+
+function clearStageLog(stage) {
+  const el = document.getElementById(`stage-log-${stage}`);
+  if (!el) return;
+  el.textContent = "";
 }
 
 function showPreview(text) {
@@ -427,10 +449,18 @@ function disableStageConfirmation(stage) {
   }
 }
 
+function updateStageRunningIndicator(stage, status) {
+  const el = document.getElementById(`stage-running-${stage}`);
+  if (!el) return;
+  el.style.display = status === "running" ? "inline-flex" : "none";
+}
+
 function appendStageLog(stage, msg) {
+  const normalized = (msg || "").trim();
+  if (/^\[[^\]]+\]\s+running$/.test(normalized)) return;
   const el = document.getElementById(`stage-log-${stage}`);
   if (!el) return;
-  el.textContent += msg + "\n";
+  el.textContent += normalized + "\n";
   el.scrollTop = el.scrollHeight;
 }
 
