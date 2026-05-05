@@ -55,6 +55,6 @@ def test_empty_turns_returns_unlabelled():
 def test_speaker_name_substitution():
     words = _words("Hello there", 0.0, 2.0)
     turns = [SpeakerTurn(start=0.0, end=2.0, speaker="SPEAKER_00")]
-    speaker_map = {"SPEAKER_00": "You", "SPEAKER_01": "Coach"}
+    speaker_map = {"SPEAKER_00": "You", "SPEAKER_01": "Facilitator"}
     result = align(words, turns, speaker_map=speaker_map)
     assert result[0].speaker == "You"

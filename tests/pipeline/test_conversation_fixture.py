@@ -47,7 +47,7 @@ def test_transcribe_conversation_fixture_contains_expected_phrases():
 
 def _words_to_turns(words: list, words_per_turn: int = 1) -> list[LabelledTurn]:
     turns: list[LabelledTurn] = []
-    speakers = ["You", "Coach"]
+    speakers = ["You", "Facilitator"]
     for index in range(0, len(words), words_per_turn):
         chunk = words[index:index + words_per_turn]
         if not chunk:
