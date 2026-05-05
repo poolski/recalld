@@ -61,6 +61,51 @@ async def test_pipeline_waits_for_vault_confirmation(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_pipeline_appends_to_existing_vault_note_when_requested(tmp_path, monkeypatch):
+    monkeypatch.setattr("recalld.pipeline.runner.DEFAULT_SCRATCH_ROOT", tmp_path)
+
+    job = create_job(category_id="cat-1", original_filename="session.m4a", scratch_root=tmp_path)
+    scratch = tmp_path / job.id
+    aligned_path = scratch / "aligned.json"
+    aligned_path.write_text(json.dumps([
+        LabelledTurn(speaker="You", start=0.0, end=1.0, text="Hello").__dict__,
+    ]))
+    postprocess_path = scratch / "postprocess.json"
+    postprocess_path.write_text(json.dumps({
+        "summary": "Summary",
+        "focus_points": ["Follow up"],
+        "strategy": "single",
+        "topic_count": 1,
+    }))
+    job.aligned_path = str(aligned_path)
+    job.postprocess_path = str(postprocess_path)
+    job.filename = "2026-04-29 Project Starfish Meeting.md"
+    job.vault_write_mode = "append"
+    job.current_stage = JobStage.vault
+    job.stage_statuses["postprocess"] = "done"
+    job.stage_statuses["vault"] = "pending"
+    save_job(job, scratch_root=tmp_path)
+
+    cfg = Config(
+        llm_model="test-model",
+        categories=[Category(id="cat-1", name="Coaching", vault_path="Life/Sessions")],
+    )
+
+    with patch("recalld.pipeline.runner.VaultWriter") as MockWriter:
+        writer = MockWriter.return_value
+        writer.append_note = AsyncMock()
+        writer.write_note = AsyncMock()
+        writer.note_exists = AsyncMock(return_value=True)
+        await run_pipeline(job, scratch / "session.m4a", cfg)
+
+    writer.append_note.assert_awaited_once()
+    writer.write_note.assert_not_awaited()
+    reloaded = load_job(job.id, scratch_root=tmp_path)
+    assert reloaded.status == JobStatus.complete
+    assert reloaded.vault_write_mode is None
+
+
+@pytest.mark.asyncio
 async def test_pipeline_waits_for_speaker_confirmation_after_align(tmp_path, monkeypatch):
     monkeypatch.setattr("recalld.pipeline.runner.DEFAULT_SCRATCH_ROOT", tmp_path)
 
