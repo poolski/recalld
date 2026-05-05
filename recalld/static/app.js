@@ -263,7 +263,13 @@ function updateStage(stage, status, message) {
   }
   updateStageRunningIndicator(stage, status);
   if (status !== "awaiting_confirmation") disableStageConfirmation(stage);
-  if (msg) msg.textContent = "";
+  if (msg) {
+    if (message && (status === "failed" || status === "awaiting_confirmation")) {
+      msg.textContent = message;
+    } else {
+      msg.textContent = "";
+    }
+  }
 
   if (header && (status === "running" || status === "failed" || status === "awaiting_confirmation")) {
     setStageExpanded(stage, true);
