@@ -125,6 +125,7 @@ async def save_settings(
     llm_base_url: str = Form(...),
     llm_model: str = Form(""),
     llm_context_headroom: float = Form(0.8),
+    llm_reasoning: str = Form("off"),
     log_level: str = Form("info"),
     whisper_model: str = Form("small"),
     huggingface_token: str = Form(""),
@@ -138,6 +139,7 @@ async def save_settings(
     cfg.llm_base_url = llm_base_url
     cfg.llm_model = llm_model
     cfg.llm_context_headroom = llm_context_headroom
+    cfg.llm_reasoning = llm_reasoning
     cfg.log_level = log_level
     cfg.whisper_model = whisper_model
     if huggingface_token:

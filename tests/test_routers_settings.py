@@ -52,6 +52,8 @@ def test_settings_page_shows_provider_models(monkeypatch):
     assert "Loaded context length" in resp.text
     assert "Maximum context length" in resp.text
     assert "Refresh models" in resp.text
+    assert 'name="llm_reasoning"' in resp.text
+    assert '<option value="off" selected>Off</option>' in resp.text
 
 
 def test_settings_page_indicates_stored_secrets():
@@ -92,6 +94,7 @@ def test_save_settings_persists_selected_provider_model(monkeypatch):
         "llm_base_url": "http://localhost:1234",
         "llm_model": "qwen/qwen3-8b",
         "llm_context_headroom": "0.75",
+        "llm_reasoning": "off",
         "log_level": "info",
         "whisper_model": "small",
         "huggingface_token": "",
@@ -103,6 +106,7 @@ def test_save_settings_persists_selected_provider_model(monkeypatch):
     assert cfg.llm_base_url == "http://localhost:1234"
     assert cfg.llm_model == "qwen/qwen3-8b"
     assert cfg.llm_context_headroom == 0.75
+    assert cfg.llm_reasoning == "off"
     assert "Settings saved." in resp.text
     assert "qwen/qwen3-8b" in resp.text
     assert load_config().vault_name == "Personal"
@@ -130,6 +134,7 @@ def test_save_settings_preserves_existing_secrets_when_blank(monkeypatch):
         "llm_base_url": "http://localhost:5678",
         "llm_model": "qwen/qwen3-8b",
         "llm_context_headroom": "0.75",
+        "llm_reasoning": "off",
         "log_level": "debug",
         "whisper_model": "medium",
         "huggingface_token": "",
@@ -159,6 +164,7 @@ def test_settings_page_shows_notice_when_provider_unavailable_but_model_selected
         "llm_base_url": "http://localhost:1234/api/v1",
         "llm_model": "qwen/qwen3-4b",
         "llm_context_headroom": "0.8",
+        "llm_reasoning": "off",
         "log_level": "info",
         "whisper_model": "small",
         "huggingface_token": "",

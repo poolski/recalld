@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "recalld" / "config.json"
@@ -28,12 +28,20 @@ class Config(BaseModel):
     llm_base_url: str = "http://localhost:1234/v1"
     llm_model: str = ""
     llm_context_headroom: float = 0.8
+    llm_reasoning: str = "off"
     log_level: str = "info"
     last_used_category: Optional[str] = None
     categories: list[Category] = Field(default_factory=list)
     whisper_model: str = "small"
     huggingface_token: str = ""
     scratch_retention_days: int = 30
+
+    @field_validator("llm_reasoning", mode="before")
+    @classmethod
+    def _normalize_llm_reasoning(cls, value):
+        if isinstance(value, str) and value.strip().lower() == "on":
+            return "on"
+        return "off"
 
 
 def _resolve_config_path(path: Path | None) -> Path:

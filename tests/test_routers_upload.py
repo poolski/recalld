@@ -1,3 +1,5 @@
+from datetime import date, timedelta
+
 from fastapi.testclient import TestClient
 
 from recalld.app import create_app
@@ -45,7 +47,7 @@ def test_index_jobs_tab_renders_all_jobs_table(tmp_path, monkeypatch):
     assert "Selected job" in resp.text
 
 
-def test_upload_uses_user_provided_note_title(tmp_path, monkeypatch):
+def test_upload_defaults_to_category_title(tmp_path, monkeypatch):
     monkeypatch.setattr("recalld.routers.upload.DEFAULT_SCRATCH_ROOT", tmp_path)
     monkeypatch.setattr("recalld.app.DEFAULT_SCRATCH_ROOT", tmp_path)
     config_path = tmp_path / "config.json"
@@ -53,20 +55,21 @@ def test_upload_uses_user_provided_note_title(tmp_path, monkeypatch):
     monkeypatch.setattr("recalld.routers.upload.run_pipeline", lambda *args, **kwargs: None)
     monkeypatch.setattr("asyncio.create_task", lambda coro: None)
 
-    cfg = Config(categories=[Category(id="cat-1", name="Coaching", vault_path="Notes/Sessions")])
+    cfg = Config(categories=[Category(id="cat-1", name="Planning", vault_path="Notes/Sessions")])
     save_config(cfg, path=config_path)
 
     client = TestClient(create_app())
     resp = client.post(
         "/upload",
-        data={"category_id": "cat-1", "note_title": "Project Starfish Meeting"},
+        data={"category_id": "cat-1", "note_target": "new"},
         files={"file": ("session.m4a", b"audio", "audio/mp4")},
     )
     assert resp.status_code == 200
-    assert "Project Starfish Meeting.md" in resp.text
+    job = list_jobs(scratch_root=tmp_path)[0]
+    assert job.filename == f"{job.created_at.date().isoformat()} Planning.md"
 
 
-def test_upload_sanitizes_user_provided_note_title(tmp_path, monkeypatch):
+def test_upload_sanitizes_generated_note_title(tmp_path, monkeypatch):
     monkeypatch.setattr("recalld.routers.upload.DEFAULT_SCRATCH_ROOT", tmp_path)
     monkeypatch.setattr("recalld.app.DEFAULT_SCRATCH_ROOT", tmp_path)
     config_path = tmp_path / "config.json"
@@ -74,13 +77,13 @@ def test_upload_sanitizes_user_provided_note_title(tmp_path, monkeypatch):
     monkeypatch.setattr("recalld.routers.upload.run_pipeline", lambda *args, **kwargs: None)
     monkeypatch.setattr("asyncio.create_task", lambda coro: None)
 
-    cfg = Config(categories=[Category(id="cat-1", name="Coaching", vault_path="Notes/Sessions")])
+    cfg = Config(categories=[Category(id="cat-1", name="Planning", vault_path="Notes/Sessions")])
     save_config(cfg, path=config_path)
 
     client = TestClient(create_app())
     resp = client.post(
         "/upload",
-        data={"category_id": "cat-1", "note_title": "../Project / Starfish\\.."},
+        data={"category_id": "cat-1", "note_target": "new"},
         files={"file": ("session.m4a", b"audio", "audio/mp4")},
     )
 
@@ -91,3 +94,57 @@ def test_upload_sanitizes_user_provided_note_title(tmp_path, monkeypatch):
     assert "\\" not in job.filename
     assert ".." not in job.filename
     assert job.filename.endswith(".md")
+
+
+def test_upload_note_target_partial_prefers_canonical_title_and_existing_match(tmp_path, monkeypatch):
+    monkeypatch.setattr("recalld.config.DEFAULT_CONFIG_PATH", tmp_path / "config.json")
+    cfg = Config(categories=[Category(id="cat-1", name="Planning", vault_path="Notes/Sessions")])
+    save_config(cfg, path=tmp_path / "config.json")
+
+    async def fake_list_directory(self, vault_path):
+        return [
+            f"{date.today().isoformat()} Planning.md",
+            f"{date.today().isoformat()} Project Notes.md",
+            f"{(date.today() - timedelta(days=8)).isoformat()} Too Early.md",
+            "scratch.txt",
+        ]
+
+    monkeypatch.setattr("recalld.pipeline.vault.VaultWriter.list_directory", fake_list_directory)
+
+    client = TestClient(create_app())
+    resp = client.get("/upload/note-target", params={"category_id": "cat-1"})
+
+    assert resp.status_code == 200
+    assert "Create new note" in resp.text
+    assert "Use existing note" in resp.text
+    assert f"{date.today().isoformat()} Planning.md" in resp.text
+    assert f"{date.today().isoformat()} Project Notes.md" in resp.text
+    assert "scratch.txt" not in resp.text
+    assert "Too Early.md" not in resp.text
+
+
+def test_upload_persists_note_target_mode(tmp_path, monkeypatch):
+    monkeypatch.setattr("recalld.routers.upload.DEFAULT_SCRATCH_ROOT", tmp_path)
+    monkeypatch.setattr("recalld.app.DEFAULT_SCRATCH_ROOT", tmp_path)
+    config_path = tmp_path / "config.json"
+    monkeypatch.setattr("recalld.config.DEFAULT_CONFIG_PATH", config_path)
+    monkeypatch.setattr("recalld.routers.upload.run_pipeline", lambda *args, **kwargs: None)
+    monkeypatch.setattr("asyncio.create_task", lambda coro: None)
+
+    cfg = Config(categories=[Category(id="cat-1", name="Planning", vault_path="Notes/Sessions")])
+    save_config(cfg, path=config_path)
+
+    client = TestClient(create_app())
+    resp = client.post(
+        "/upload",
+        data={
+            "category_id": "cat-1",
+            "note_target": f"Notes/Sessions/{date.today().isoformat()} Planning.md",
+        },
+        files={"file": ("session.m4a", b"audio", "audio/mp4")},
+    )
+
+    assert resp.status_code == 200
+    job = list_jobs(scratch_root=tmp_path)[0]
+    assert job.note_target_mode == "existing"
+    assert job.note_target_path == f"Notes/Sessions/{date.today().isoformat()} Planning.md"

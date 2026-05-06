@@ -70,6 +70,8 @@ def _load_vault_preview(job, category) -> str:
 def _vault_note_path(job, category) -> str | None:
     if not category:
         return None
+    if job.note_target_path:
+        return job.note_target_path
     session_date = job.created_at.date()
     filename = job.filename or f"{session_date.isoformat()} {category.name}.md"
     return f"{category.vault_path}/{filename}"
@@ -217,6 +219,21 @@ async def _restart_from_stage(request: Request, job_id: str, stage: JobStage) ->
     job = load_job(job_id, scratch_root=DEFAULT_SCRATCH_ROOT)
     if can_restart_from_stage(job, stage):
         reset_job_for_rerun(job, from_start=False, restart_stage=stage)
+        if stage == JobStage.vault:
+            job.status = JobStatus.pending
+            job.stage_statuses["vault"] = "awaiting_confirmation"
+            _save_job(job)
+            bus.publish(job.id, {
+                "stage": "vault",
+                "status": "awaiting_confirmation",
+                "can_confirm_vault": True,
+                "filename": job.filename,
+                "vault_preview": _load_vault_preview(
+                    job,
+                    next((c for c in load_config().categories if c.id == job.category_id), None),
+                ),
+            })
+            return templates.TemplateResponse(request, "processing.html", {"job": job})
     job.status = JobStatus.running
     _save_job(job)
     cfg = load_config()
@@ -291,6 +308,7 @@ async def confirm_vault_write(
         sanitized = _normalize_note_title(filename, job.created_at.date())
         if sanitized:
             job.filename = sanitized
+            job.note_target_path = f"{cat.vault_path}/{sanitized}" if cat else job.note_target_path
     if not cat:
         job.status = JobStatus.failed
         job.error = "Category not found"
@@ -299,13 +317,17 @@ async def confirm_vault_write(
         return templates.TemplateResponse(request, "processing.html", {"job": job})
 
     note_name = job.filename or f"{job.created_at.date().isoformat()} {cat.name}.md"
-    note_path = f"{cat.vault_path}/{note_name}"
+    note_path = job.note_target_path or f"{cat.vault_path}/{note_name}"
     normalized_mode = (write_mode or "").strip().lower()
+    existing_target = job.note_target_mode == "existing"
 
     if normalized_mode and normalized_mode not in {"overwrite", "append"}:
         return HTMLResponse("Invalid write mode", status_code=400)
 
-    if normalized_mode == "append":
+    if existing_target:
+        normalized_mode = "append"
+
+    if normalized_mode == "append" and not existing_target:
         writer = VaultWriter(cfg.obsidian_api_url, cfg.obsidian_api_key)
         if not await writer.note_exists(note_path):
             normalized_mode = "overwrite"
@@ -329,6 +351,7 @@ async def confirm_vault_write(
         normalized_mode = "overwrite"
 
     job.filename = note_name
+    job.note_target_path = note_path
     job.vault_write_mode = normalized_mode
     job.vault_conflict_path = None
     job.status = JobStatus.running
@@ -400,6 +423,7 @@ async def write_transcript_only(request: Request, job_id: str):
         writer = VaultWriter(cfg.obsidian_api_url, cfg.obsidian_api_key)
         session_date = job.created_at.date()
         filename = job.filename or f"{session_date.isoformat()} {cat.name}.md"
+        note_path = job.note_target_path or f"{cat.vault_path}/{filename}"
         content = render_session_note(
             session_date=session_date,
             category=cat.name,
@@ -407,7 +431,8 @@ async def write_transcript_only(request: Request, job_id: str):
             result=None,
             turns=labelled,
         )
-        await writer.write_note(cat.vault_path, filename, content)
+        note_dir, note_name = note_path.rsplit("/", 1)
+        await writer.write_note(note_dir, note_name, content)
         job.status = JobStatus.complete
         job.stage_statuses["vault"] = "done"
         _save_job(job)

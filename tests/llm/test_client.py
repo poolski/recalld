@@ -5,6 +5,7 @@ import pytest
 import respx
 
 from recalld.llm.client import LLMClient
+from recalld.llm.client import LLMRequestError
 
 
 @pytest.mark.asyncio
@@ -72,6 +73,29 @@ async def test_llm_client_strips_trailing_v1_from_base_url():
 
     assert route.called
     assert result == "ok"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_llm_client_raises_lmstudio_error_message_on_failed_request():
+    respx.post("http://localhost:1234/api/v1/chat").mock(
+        return_value=httpx.Response(
+            400,
+            json={
+                "error": {
+                    "message": "Reasoning setting 'low' is not supported by model 'google/gemma-4-e4b'. Supported settings: 'off', 'on'.",
+                    "type": "invalid_request",
+                    "param": "reasoning",
+                    "code": "invalid_value",
+                }
+            },
+        )
+    )
+
+    client = LLMClient(base_url="http://localhost:1234", model="qwen/qwen3-4b")
+
+    with pytest.raises(LLMRequestError, match="Reasoning setting 'low' is not supported"):
+        await client.complete("system", "user")
 
 
 @pytest.mark.asyncio

@@ -5,6 +5,9 @@ from typing import Callable, Optional
 
 import httpx
 
+class LLMRequestError(RuntimeError):
+    pass
+
 
 class LLMClient:
     def __init__(self, base_url: str, model: str, timeout: float = 120.0) -> None:
@@ -31,6 +34,34 @@ class LLMClient:
 
     def _models_load_url(self) -> str:
         return self._api_v1_url("/models/load")
+
+    def _chat_payload(self, system: str, user: str, stream: bool) -> dict:
+        payload = {
+            "model": self.model,
+            "system_prompt": system,
+            "input": user,
+            "stream": stream,
+        }
+        return payload
+
+    def _extract_error_message(self, resp: httpx.Response) -> str:
+        try:
+            data = resp.json()
+        except Exception:
+            text = resp.text.strip()
+            return text or f"LM Studio request failed with status {resp.status_code}"
+
+        if isinstance(data, dict):
+            error = data.get("error")
+            if isinstance(error, dict):
+                message = error.get("message")
+                if isinstance(message, str) and message.strip():
+                    return message.strip()
+            message = data.get("message")
+            if isinstance(message, str) and message.strip():
+                return message.strip()
+        text = resp.text.strip()
+        return text or f"LM Studio request failed with status {resp.status_code}"
 
     def _parse_output(self, data: dict) -> str:
         if data.get("type") == "chat.end":
@@ -61,15 +92,11 @@ class LLMClient:
 
     async def complete(self, system: str, user: str) -> str:
         """Send an LM Studio chat request. Returns the output text."""
-        payload = {
-            "model": self.model,
-            "system_prompt": system,
-            "input": user,
-            "stream": False,
-        }
+        payload = self._chat_payload(system, user, stream=False)
         async with httpx.AsyncClient(verify=False, timeout=self.timeout) as client:
             resp = await client.post(self._chat_url(), json=payload, headers=self._headers())
-            resp.raise_for_status()
+            if resp.is_error:
+                raise LLMRequestError(self._extract_error_message(resp))
             data = resp.json()
             return self._parse_output(data)
 
@@ -93,15 +120,11 @@ class LLMClient:
     ):
         """Send a streaming LM Studio chat request. Yields partial content tokens."""
         import json
-        payload = {
-            "model": self.model,
-            "system_prompt": system,
-            "input": user,
-            "stream": True,
-        }
+        payload = self._chat_payload(system, user, stream=True)
         async with httpx.AsyncClient(verify=False, timeout=self.timeout) as client:
             async with client.stream("POST", self._chat_url(), json=payload, headers=self._headers()) as resp:
-                resp.raise_for_status()
+                if resp.is_error:
+                    raise LLMRequestError(self._extract_error_message(resp))
                 event_type = None
                 data_lines: list[str] = []
                 yielded_message = False

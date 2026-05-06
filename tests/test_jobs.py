@@ -29,6 +29,16 @@ def test_save_and_load(tmp_path):
     assert loaded.status == JobStatus.running
 
 
+def test_note_target_mode_is_persisted(tmp_path):
+    job = create_job(category_id="adhd", original_filename="session.m4a", scratch_root=tmp_path)
+    job.note_target_mode = "existing"
+    save_job(job, scratch_root=tmp_path)
+
+    loaded = load_job(job.id, scratch_root=tmp_path)
+
+    assert loaded.note_target_mode == "existing"
+
+
 def test_advance_stage(tmp_path):
     job = create_job(category_id="adhd", original_filename="session.m4a", scratch_root=tmp_path)
     job.current_stage = JobStage.transcribe
