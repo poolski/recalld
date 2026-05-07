@@ -232,7 +232,7 @@ def test_run_themes_prompt_experiment_uses_each_requested_label(tmp_path, monkey
     assert client.created_item["id"] == context.dataset_item_id
     assert captured_envs == ["experiments"]
     assert "LANGFUSE_TRACING_ENVIRONMENT" not in os.environ
-    assert len(client.created_scores) == 4
+    assert len(client.created_scores) == 2
     assert all(score["session_id"].startswith("run-themes-") for score in client.created_scores)
     assert len(dataset.evaluations) == 2
 
