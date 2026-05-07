@@ -25,8 +25,8 @@ async def test_experiment_quality_evaluator_uses_runtime_prompt_and_parses_json(
         captured["resolve"] = (name, fallback, variables)
         return resolved
 
-    async def fake_complete(system, user, prompt=None, metadata=None):
-        captured["complete"] = (system, user, prompt, metadata)
+    async def fake_complete(system, user, prompt=None, metadata=None, preset=None):
+        captured["complete"] = (system, user, prompt, metadata, preset)
         return '{"score": 0.83, "reason": "good enough", "strengths": ["clear"], "issues": []}'
 
     with patch("recalld.experiments.langfuse_evaluator.resolve_text_prompt", side_effect=fake_resolve), \
@@ -52,6 +52,7 @@ async def test_experiment_quality_evaluator_uses_runtime_prompt_and_parses_json(
     assert captured["complete"][0] == "judge-system"
     assert '"task_name": "summary"' in captured["complete"][1]
     assert captured["complete"][2] == "judge-prompt"
+    assert captured["complete"][4] == "@local:transcript-summariser"
 
 
 @pytest.mark.asyncio

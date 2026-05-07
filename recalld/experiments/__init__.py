@@ -30,7 +30,7 @@ def experiment_description(
         action = f"Comparing {label_str} against {', '.join(other)}"
     else:
         action = f"Baseline run of {label_str}"
-    parts = [f"{action} {exp_type} prompt on \"{filename}\" using {llm_model}."]
+    parts = [f"{exp_type}: {action} prompt on \"{filename}\" using {llm_model}."]
     if run_tag:
         parts.append(f"Run tag: {run_tag}.")
     return " ".join(parts)

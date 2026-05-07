@@ -17,10 +17,19 @@ from recalld.config import load_config
 from recalld.experiments import experiment_description
 from recalld.experiments import prompt_version as get_prompt_version
 from recalld.jobs import DEFAULT_SCRATCH_ROOT, load_job
-from recalld.llm.context import ensure_loaded_context_length, token_budget
+from recalld.llm.context import ensure_loaded_context_length, list_available_models, token_budget
+from recalld.experiments.langfuse_session_scores import mirror_experiment_scores_to_session
 from recalld.pipeline.align import LabelledTurn
 from recalld.pipeline.themes import propose_themes
-from recalld.tracing import get_langfuse_client, shutdown_tracing, update_current_span
+from recalld.tracing import (
+    experiment_tracing_environment,
+    get_langfuse_client,
+    job_session_token,
+    make_session_id,
+    session_context,
+    shutdown_tracing,
+    update_current_span,
+)
 
 DEFAULT_DATASET_SUFFIX = "themes"
 DEFAULT_PROMPT_LABELS = ("production",)
@@ -177,19 +186,25 @@ async def _generate_themes(
     }
 
 
-def _run_name(original_filename: str, prompt_label: str, run_tag: str | None) -> str:
+def _run_name(
+    step: str,
+    original_filename: str,
+    prompt_label: str,
+    llm_model: str,
+    context_length: int,
+    run_tag: str | None,
+) -> str:
     stem = Path(original_filename).stem if original_filename else "job"
-    parts = [stem, prompt_label]
+    parts = [step, stem, prompt_label, llm_model, f"ctx{context_length}"]
     if run_tag:
         parts.append(run_tag)
     parts.append(datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"))
     return " · ".join(parts)
 
 
-def _load_runtime_config() -> tuple[str, str, int]:
+def _load_runtime_config() -> tuple[str, str, float]:
     cfg = load_config()
-    ctx_len = asyncio.run(ensure_loaded_context_length(cfg.llm_base_url, cfg.llm_model))
-    return cfg.llm_base_url, cfg.llm_model, token_budget(ctx_len, cfg.llm_context_headroom)
+    return cfg.llm_base_url, cfg.llm_model, cfg.llm_context_headroom
 
 
 def _run_coro_sync(coro):
@@ -248,102 +263,137 @@ def run_themes_prompt_experiment(
     *,
     job_id: str,
     prompt_labels: list[str] | None = None,
+    llm_models: list[str] | None = None,
+    context_length: int | None = None,
     scratch_root: Path = DEFAULT_SCRATCH_ROOT,
     dataset_name: str | None = None,
     clone_from_label: str | None = None,
     run_tag: str | None = None,
     experiment_name: str | None = None,
 ) -> list[dict[str, Any]]:
-    client = get_langfuse_client()
-    if client is None:
-        raise RuntimeError("Langfuse credentials are unavailable; cannot run experiment.")
+    with experiment_tracing_environment():
+        client = get_langfuse_client()
+        if client is None:
+            raise RuntimeError("Langfuse credentials are unavailable; cannot run experiment.")
 
-    context = load_themes_experiment_context(job_id, scratch_root=scratch_root)
-    if dataset_name:
-        context = ThemesExperimentContext(
-            job_id=context.job_id,
-            dataset_name=dataset_name,
-            dataset_item_id=f"themes-{context.job_id}",
-            input_data=context.input_data,
-            expected_output=context.expected_output,
-            original_filename=context.original_filename,
-        )
-
-    dataset = _ensure_dataset(client, context)
-    labels = prompt_labels or list(DEFAULT_PROMPT_LABELS)
-    llm_base_url, llm_model, budget = _load_runtime_config()
-    run_results: list[dict[str, Any]] = []
-
-    if clone_from_label:
-        from recalld.experiments.langfuse_summary import clone_prompt_label
-
-        for prompt_label in labels:
-            if prompt_label == clone_from_label:
-                continue
-            clone_prompt_label(
-                source_label=clone_from_label,
-                target_label=prompt_label,
-                prompt_names=("recalld/themes-single", "recalld/themes-map"),
-                client=client,
+        context = load_themes_experiment_context(job_id, scratch_root=scratch_root)
+        if dataset_name:
+            context = ThemesExperimentContext(
+                job_id=context.job_id,
+                dataset_name=dataset_name,
+                dataset_item_id=f"themes-{context.job_id}",
+                input_data=context.input_data,
+                expected_output=context.expected_output,
+                original_filename=context.original_filename,
             )
 
-    for prompt_label in labels:
-        run_name = _run_name(context.original_filename, prompt_label, run_tag)
+        dataset = _ensure_dataset(client, context)
+        labels = prompt_labels or list(DEFAULT_PROMPT_LABELS)
+        llm_base_url, fallback_model, headroom = _load_runtime_config()
+        model_ids = llm_models or ([fallback_model] if fallback_model else [])
+        if not model_ids:
+            raise ValueError("No LM Studio model ids were provided.")
+        if llm_models is not None:
+            available = asyncio.run(list_available_models(llm_base_url, selected_model=model_ids[0]))
+            available_ids = {model.id for model in available}
+            missing = [model_id for model_id in model_ids if model_id not in available_ids]
+            if missing:
+                raise ValueError(f"Requested LM Studio model(s) not available: {', '.join(missing)}")
+        run_results: list[dict[str, Any]] = []
 
-        def task(*, item, **kwargs):
-            update_current_span(name=f"propose-themes · {filename} · {prompt_label}")
-            return _run_coro_sync(
-                _generate_themes(
-                    input_data=item.input,
-                    prompt_label=prompt_label,
-                    llm_base_url=llm_base_url,
-                    llm_model=llm_model,
-                    token_budget_value=budget,
+        if clone_from_label:
+            from recalld.experiments.langfuse_summary import clone_prompt_label
+
+            for prompt_label in labels:
+                if prompt_label == clone_from_label:
+                    continue
+                clone_prompt_label(
+                    source_label=clone_from_label,
+                    target_label=prompt_label,
+                    prompt_names=("recalld/themes-single", "recalld/themes-map"),
+                    client=client,
+                )
+
+        for model_id in model_ids:
+            target_context_length = asyncio.run(
+                ensure_loaded_context_length(
+                    llm_base_url,
+                    model_id,
+                    requested_context_length=context_length,
                 )
             )
+            target_budget = token_budget(target_context_length, headroom)
+            for prompt_label in labels:
+                run_name = _run_name("themes", context.original_filename, prompt_label, model_id, target_context_length, run_tag)
+                run_session_id = make_session_id(
+                    "themes",
+                    job_session_token(context.job_id) or context.job_id,
+                    prompt_label,
+                    model_id,
+                    f"ctx{target_context_length}",
+                    run_tag,
+                    timestamp=datetime.now(timezone.utc),
+                )
 
-        tag_parts = [f"[{run_tag}]"] if run_tag else []
-        default_name = " ".join([prompt_label] + tag_parts)
-        exp_name = experiment_name or default_name
-        filename = Path(context.original_filename).stem if context.original_filename else context.job_id
-        pv = get_prompt_version(client, "recalld/themes-single", prompt_label)
-        exp_description = experiment_description(
-            exp_type="themes",
-            filename=filename,
-            prompt_label=prompt_label,
-            prompt_version=pv,
-            llm_model=llm_model,
-            all_labels=labels,
-            run_tag=run_tag,
-        )
-        meta: dict[str, Any] = {
-            "job_id": context.job_id,
-            "dataset_name": context.dataset_name,
-            "prompt_label": prompt_label,
-            "llm_model": llm_model,
-            "experiment_name": "themes",
-        }
-        if run_tag:
-            meta["run_tag"] = run_tag
-        result = dataset.run_experiment(
-            name=exp_name,
-            run_name=run_name,
-            description=exp_description,
-            task=task,
-            evaluators=[make_themes_alignment_evaluator(prompt_label)],
-            max_concurrency=1,
-            metadata=meta,
-        )
-        run_results.append(
-            {
-                "prompt_label": prompt_label,
-                "run_name": run_name,
-                "result": result,
-            }
-        )
+                def task(*, item, **kwargs):
+                    update_current_span(name=f"propose-themes · {filename} · {prompt_label} · {model_id}")
+                    return _run_coro_sync(
+                        _generate_themes(
+                            input_data=item.input,
+                            prompt_label=prompt_label,
+                            llm_base_url=llm_base_url,
+                            llm_model=model_id,
+                            token_budget_value=target_budget,
+                        )
+                    )
 
-    shutdown_tracing()
-    return run_results
+                tag_parts = [f"[{run_tag}]"] if run_tag else []
+                default_name = " ".join([model_id, prompt_label] + tag_parts)
+                exp_name = experiment_name or default_name
+                filename = Path(context.original_filename).stem if context.original_filename else context.job_id
+                pv = get_prompt_version(client, "recalld/themes-single", prompt_label)
+                exp_description = experiment_description(
+                    exp_type="themes",
+                    filename=filename,
+                    prompt_label=prompt_label,
+                    prompt_version=pv,
+                    llm_model=model_id,
+                    all_labels=labels,
+                    run_tag=run_tag,
+                )
+                meta: dict[str, Any] = {
+                    "job_id": context.job_id,
+                    "dataset_name": context.dataset_name,
+                    "prompt_label": prompt_label,
+                    "llm_model": model_id,
+                    "context_length": target_context_length,
+                    "experiment_name": "themes",
+                }
+                if run_tag:
+                    meta["run_tag"] = run_tag
+                with session_context(run_session_id):
+                    result = dataset.run_experiment(
+                        name=exp_name,
+                        run_name=run_name,
+                        description=exp_description,
+                        task=task,
+                        evaluators=[make_themes_alignment_evaluator(prompt_label)],
+                        max_concurrency=1,
+                        metadata=meta,
+                    )
+                mirror_experiment_scores_to_session(client, result, session_id=run_session_id, metadata=meta)
+                run_results.append(
+                    {
+                        "prompt_label": prompt_label,
+                        "llm_model": model_id,
+                        "context_length": target_context_length,
+                        "run_name": run_name,
+                        "result": result,
+                    }
+                )
+
+        shutdown_tracing()
+        return run_results
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -356,6 +406,18 @@ def _build_parser() -> argparse.ArgumentParser:
         action="append",
         dest="prompt_labels",
         help="Langfuse prompt label to compare; repeat for multiple labels",
+    )
+    parser.add_argument(
+        "--llm-model",
+        action="append",
+        dest="llm_models",
+        help="LM Studio model id to run; repeat for multiple models",
+    )
+    parser.add_argument(
+        "--context-length",
+        type=int,
+        default=32768,
+        help="Context length to request when loading each model",
     )
     parser.add_argument(
         "--dataset-name",
@@ -379,12 +441,14 @@ def main(argv: list[str] | None = None) -> int:
     results = run_themes_prompt_experiment(
         job_id=args.job_id,
         prompt_labels=args.prompt_labels,
+        llm_models=args.llm_models,
+        context_length=args.context_length,
         scratch_root=Path(args.scratch_root),
         dataset_name=args.dataset_name,
         clone_from_label=args.clone_from_label,
     )
     for item in results:
-        print(f"{item['prompt_label']}: {item['run_name']}")
+        print(f"{item['prompt_label']} [{item['llm_model']}]: {item['run_name']}")
         print(item["result"].format())
     return 0
 

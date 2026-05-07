@@ -145,9 +145,14 @@ def _cmd_prompt_clone_label(args: argparse.Namespace) -> int:
 
 
 def _experiment_kwargs(args: argparse.Namespace) -> dict[str, Any]:
+    context_length = getattr(args, "context_length", None)
+    if context_length is None and getattr(args, "llm_model", None):
+        context_length = 32768
     return dict(
         job_id=args.job_id,
         prompt_labels=getattr(args, "prompt_label", None),
+        llm_models=getattr(args, "llm_model", None),
+        context_length=context_length,
         scratch_root=Path(getattr(args, "scratch_root", str(Path.home() / ".local" / "share" / "recalld" / "jobs"))),
         dataset_name=getattr(args, "dataset_name", None),
         clone_from_label=getattr(args, "clone_from_label", None),
@@ -161,6 +166,17 @@ def _cmd_summary_experiment(args: argparse.Namespace) -> int:
     from recalld.experiments.langfuse_summary import run_summary_prompt_experiment
 
     results = run_summary_prompt_experiment(**_experiment_kwargs(args))
+    for result in results:
+        print(f"{result['prompt_label']}: {result['run_name']}")
+        print(result["result"].format())
+    return 0
+
+
+def _cmd_focus_experiment(args: argparse.Namespace) -> int:
+    _ensure_repo_on_path()
+    from recalld.experiments.langfuse_focus import run_focus_prompt_experiment
+
+    results = run_focus_prompt_experiment(**_experiment_kwargs(args))
     for result in results:
         print(f"{result['prompt_label']}: {result['run_name']}")
         print(result["result"].format())
@@ -349,19 +365,14 @@ def _cmd_experiment(args: argparse.Namespace) -> int:
     os.environ.setdefault("LANGFUSE_ENABLE_REMOTE_PROMPTS", "1")
     _ensure_repo_on_path()
 
-    kwargs = dict(
-        job_id=args.job_id,
-        prompt_labels=args.prompt_label,
-        scratch_root=Path(args.scratch_root),
-        dataset_name=args.dataset_name,
-        clone_from_label=args.clone_from_label,
-        run_tag=args.run_tag,
-        experiment_name=args.experiment_name,
-    )
+    kwargs = _experiment_kwargs(args)
 
     if args.experiment_type == "summary":
         from recalld.experiments.langfuse_summary import run_summary_prompt_experiment
         results = run_summary_prompt_experiment(**kwargs)
+    elif args.experiment_type == "focus":
+        from recalld.experiments.langfuse_focus import run_focus_prompt_experiment
+        results = run_focus_prompt_experiment(**kwargs)
     elif args.experiment_type == "themes":
         from recalld.experiments.langfuse_themes import run_themes_prompt_experiment
         results = run_themes_prompt_experiment(**kwargs)
@@ -546,12 +557,15 @@ def _build_parser() -> argparse.ArgumentParser:
 
     for exp_type, exp_help in [
         ("summary", "Run a summary prompt experiment"),
+        ("focus", "Run a focus prompt experiment"),
         ("themes", "Run a themes prompt experiment"),
         ("style", "Run a style sub-prompt experiment"),
     ]:
         exp = experiment_sub.add_parser(exp_type, help=exp_help)
         exp.add_argument("--job-id", required=True)
         exp.add_argument("--prompt-label", action="append", dest="prompt_label")
+        exp.add_argument("--llm-model", action="append", dest="llm_model")
+        exp.add_argument("--context-length", type=int)
         exp.add_argument("--clone-from-label")
         exp.add_argument("--dataset-name")
         exp.add_argument("--run-tag", dest="run_tag", help="Tag added to run name and metadata (e.g. model name)")

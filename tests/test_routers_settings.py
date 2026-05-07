@@ -31,7 +31,13 @@ class _FakeAsyncClient:
 def test_settings_page_shows_provider_models(monkeypatch):
     async def fake_list_models(base_url: str, selected_model: str):
         return [
-            ProviderModel(id="qwen/qwen3-4b", max_context_length=32768, loaded_context_length=16384, selected=True),
+            ProviderModel(
+                id="qwen/qwen3-4b",
+                max_context_length=32768,
+                loaded_context_length=16384,
+                loaded_instance_id="qwen/qwen3-4b",
+                selected=True,
+            ),
             ProviderModel(id="qwen/qwen3-8b", max_context_length=65536, selected=False),
         ]
 
@@ -197,7 +203,13 @@ def test_status_bar_renders_clickable_indicators(monkeypatch):
 def test_status_details_returns_selected_model_and_tooling(monkeypatch):
     async def fake_list_models(base_url: str, selected_model: str):
         return [
-            ProviderModel(id="qwen/qwen3-4b", max_context_length=32768, loaded_context_length=16384, selected=True),
+            ProviderModel(
+                id="qwen/qwen3-4b",
+                max_context_length=32768,
+                loaded_context_length=16384,
+                loaded_instance_id="qwen/qwen3-4b",
+                selected=True,
+            ),
         ]
 
     def fake_run(cmd, capture_output, text, check, timeout):

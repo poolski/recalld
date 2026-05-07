@@ -11,12 +11,21 @@ from typing import Any
 from recalld.config import load_config
 from recalld.experiments import experiment_description
 from recalld.experiments import prompt_version as get_prompt_version
+from recalld.experiments.langfuse_evaluation_rules import ensure_evaluator_rules_include_dataset
+from recalld.experiments.langfuse_session_scores import mirror_experiment_scores_to_session
 from recalld.experiments.langfuse_summary import load_summary_experiment_context
 from recalld.jobs import DEFAULT_SCRATCH_ROOT
-from recalld.tracing import update_current_span
-from recalld.llm.context import ensure_loaded_context_length, token_budget
+from recalld.llm.client import LLMClient
+from recalld.llm.context import ensure_loaded_context_length, list_available_models
+from recalld.pipeline.postprocess import build_style_profile
+from recalld.tracing import (
+    experiment_tracing_environment,
+    job_session_token,
+    make_session_id,
+    session_context,
+    update_current_span,
+)
 from recalld.pipeline.align import LabelledTurn
-from recalld.pipeline.postprocess import postprocess
 from recalld.tracing import get_langfuse_client, shutdown_tracing
 
 DEFAULT_DATASET_SUFFIX = "style"
@@ -48,47 +57,43 @@ def load_style_experiment_context(
     )
 
 
-async def _generate_summary(
+async def _generate_style_profile(
     *,
     input_data: dict[str, Any],
     prompt_label: str,
     llm_base_url: str,
     llm_model: str,
-    token_budget_value: int,
-) -> dict[str, Any]:
+) -> str:
     turns = [LabelledTurn(**turn) for turn in input_data["aligned_turns"]]
-    result = await postprocess(
+    client = LLMClient(base_url=llm_base_url, model=llm_model)
+    return await build_style_profile(
+        client,
         turns=turns,
-        llm_base_url=llm_base_url,
-        llm_model=llm_model,
-        token_budget=token_budget_value,
         speaker_a_name=input_data.get("speaker_a_name", "You"),
         speaker_b_name=input_data.get("speaker_b_name", "Speaker 2"),
-        existing_note_content=input_data.get("existing_note_content", ""),
-        theme_guidance=input_data.get("theme_guidance", []),
         prompt_label=prompt_label,
     )
-    return {
-        "summary": result.summary,
-        "focus_points": result.focus_points,
-        "strategy": result.strategy,
-        "topic_count": result.topic_count,
-    }
 
 
-def _run_name(original_filename: str, prompt_label: str, run_tag: str | None) -> str:
+def _run_name(
+    step: str,
+    original_filename: str,
+    prompt_label: str,
+    llm_model: str,
+    context_length: int,
+    run_tag: str | None,
+) -> str:
     stem = Path(original_filename).stem if original_filename else "job"
-    parts = [stem, prompt_label]
+    parts = [step, stem, prompt_label, llm_model, f"ctx{context_length}"]
     if run_tag:
         parts.append(run_tag)
     parts.append(datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"))
     return " · ".join(parts)
 
 
-def _load_runtime_config() -> tuple[str, str, int]:
+def _load_runtime_config() -> tuple[str, str, float]:
     cfg = load_config()
-    ctx_len = asyncio.run(ensure_loaded_context_length(cfg.llm_base_url, cfg.llm_model))
-    return cfg.llm_base_url, cfg.llm_model, token_budget(ctx_len, cfg.llm_context_headroom)
+    return cfg.llm_base_url, cfg.llm_model, cfg.llm_context_headroom
 
 
 def _run_coro_sync(coro):
@@ -139,94 +144,138 @@ def _ensure_dataset(client, context: StyleExperimentContext):
                 "type": "style_prompt_experiment",
             },
         )
-    return client.get_dataset(context.dataset_name)
+    dataset = client.get_dataset(context.dataset_name)
+    ensure_evaluator_rules_include_dataset(dataset.id, dataset_kind="style", client=client)
+    return dataset
 
 
 def run_style_prompt_experiment(
     *,
     job_id: str,
     prompt_labels: list[str] | None = None,
+    llm_models: list[str] | None = None,
+    context_length: int | None = None,
     scratch_root: Path = DEFAULT_SCRATCH_ROOT,
     dataset_name: str | None = None,
     run_tag: str | None = None,
     experiment_name: str | None = None,
 ) -> list[dict[str, Any]]:
-    client = get_langfuse_client()
-    if client is None:
-        raise RuntimeError("Langfuse credentials are unavailable; cannot run experiment.")
+    with experiment_tracing_environment():
+        try:
+            client = get_langfuse_client()
+            if client is None:
+                raise RuntimeError("Langfuse credentials are unavailable; cannot run experiment.")
 
-    context = load_style_experiment_context(job_id, scratch_root=scratch_root)
-    if dataset_name:
-        context = StyleExperimentContext(
-            job_id=context.job_id,
-            dataset_name=dataset_name,
-            dataset_item_id=context.dataset_item_id,
-            input_data=context.input_data,
-            original_filename=context.original_filename,
-        )
-
-    dataset = _ensure_dataset(client, context)
-    labels = prompt_labels or list(DEFAULT_PROMPT_LABELS)
-    llm_base_url, llm_model, budget = _load_runtime_config()
-    run_results: list[dict[str, Any]] = []
-
-    for prompt_label in labels:
-        run_name = _run_name(context.original_filename, prompt_label, run_tag)
-
-        def task(*, item, **kwargs):
-            update_current_span(name=f"style · {filename} · {prompt_label}")
-            return _run_coro_sync(
-                _generate_summary(
-                    input_data=item.input,
-                    prompt_label=prompt_label,
-                    llm_base_url=llm_base_url,
-                    llm_model=llm_model,
-                    token_budget_value=budget,
+            context = load_style_experiment_context(job_id, scratch_root=scratch_root)
+            if dataset_name:
+                context = StyleExperimentContext(
+                    job_id=context.job_id,
+                    dataset_name=dataset_name,
+                    dataset_item_id=context.dataset_item_id,
+                    input_data=context.input_data,
+                    original_filename=context.original_filename,
                 )
-            )
 
-        tag_parts = [f"[{run_tag}]"] if run_tag else []
-        default_name = " ".join([prompt_label] + tag_parts)
-        exp_name = experiment_name or default_name
-        filename = Path(context.original_filename).stem if context.original_filename else context.job_id
-        pv = get_prompt_version(client, "recalld/style-instructions", prompt_label)
-        exp_description = experiment_description(
-            exp_type="style",
-            filename=filename,
-            prompt_label=prompt_label,
-            prompt_version=pv,
-            llm_model=llm_model,
-            all_labels=labels,
-            run_tag=run_tag,
-        )
-        meta: dict[str, Any] = {
-            "job_id": context.job_id,
-            "dataset_name": context.dataset_name,
-            "prompt_label": prompt_label,
-            "llm_model": llm_model,
-            "experiment_name": "style",
-        }
-        if run_tag:
-            meta["run_tag"] = run_tag
-        result = dataset.run_experiment(
-            name=exp_name,
-            run_name=run_name,
-            description=exp_description,
-            task=task,
-            evaluators=[],
-            max_concurrency=1,
-            metadata=meta,
-        )
-        run_results.append(
-            {
-                "prompt_label": prompt_label,
-                "run_name": run_name,
-                "result": result,
-            }
-        )
+            dataset = _ensure_dataset(client, context)
+            labels = prompt_labels or list(DEFAULT_PROMPT_LABELS)
+            llm_base_url, fallback_model, _headroom = _load_runtime_config()
+            model_ids = llm_models or ([fallback_model] if fallback_model else [])
+            if not model_ids:
+                raise ValueError("No LM Studio model ids were provided.")
+            if llm_models is not None:
+                available = asyncio.run(list_available_models(llm_base_url, selected_model=model_ids[0]))
+                available_ids = {model.id for model in available}
+                missing = [model_id for model_id in model_ids if model_id not in available_ids]
+                if missing:
+                    raise ValueError(f"Requested LM Studio model(s) not available: {', '.join(missing)}")
+            run_results: list[dict[str, Any]] = []
 
-    shutdown_tracing()
-    return run_results
+            for model_id in model_ids:
+                target_context_length = asyncio.run(
+                    ensure_loaded_context_length(
+                        llm_base_url,
+                        model_id,
+                        requested_context_length=context_length,
+                    )
+                )
+                for prompt_label in labels:
+                    run_name = _run_name("style", context.original_filename, prompt_label, model_id, target_context_length, run_tag)
+                    run_session_id = make_session_id(
+                        "style",
+                        job_session_token(context.job_id) or context.job_id,
+                        prompt_label,
+                        model_id,
+                        f"ctx{target_context_length}",
+                        run_tag,
+                        timestamp=datetime.now(timezone.utc),
+                    )
+
+                    def task(*, item, **kwargs):
+                        update_current_span(name=f"style · {filename} · {prompt_label} · {model_id}")
+                        return _run_coro_sync(
+                            _generate_style_profile(
+                                input_data=item.input,
+                                prompt_label=prompt_label,
+                                llm_base_url=llm_base_url,
+                                llm_model=model_id,
+                            )
+                        )
+
+                    tag_parts = [f"[{run_tag}]"] if run_tag else []
+                    default_name = " ".join([model_id, prompt_label] + tag_parts)
+                    exp_name = experiment_name or default_name
+                    filename = Path(context.original_filename).stem if context.original_filename else context.job_id
+                    pv = get_prompt_version(client, "recalld/style-instructions", prompt_label)
+                    exp_description = experiment_description(
+                        exp_type="style",
+                        filename=filename,
+                        prompt_label=prompt_label,
+                        prompt_version=pv,
+                        llm_model=model_id,
+                        all_labels=labels,
+                        run_tag=run_tag,
+                    )
+                    meta: dict[str, Any] = {
+                        "job_id": context.job_id,
+                        "dataset_name": context.dataset_name,
+                        "prompt_label": prompt_label,
+                        "llm_model": model_id,
+                        "context_length": target_context_length,
+                        "experiment_name": "style",
+                    }
+                    if run_tag:
+                        meta["run_tag"] = run_tag
+                    with session_context(run_session_id):
+                        result = dataset.run_experiment(
+                            name=exp_name,
+                            run_name=run_name,
+                            description=exp_description,
+                            task=task,
+                            evaluators=[],
+                            max_concurrency=1,
+                            metadata=meta,
+                        )
+                    mirror_experiment_scores_to_session(
+                        client,
+                        result,
+                        session_id=run_session_id,
+                        metadata=meta,
+                        wait_for_scores=True,
+                        settle_timeout_seconds=10.0,
+                    )
+                    run_results.append(
+                        {
+                            "prompt_label": prompt_label,
+                            "llm_model": model_id,
+                            "context_length": target_context_length,
+                            "run_name": run_name,
+                            "result": result,
+                        }
+                    )
+
+            return run_results
+        finally:
+            shutdown_tracing()
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -239,6 +288,18 @@ def _build_parser() -> argparse.ArgumentParser:
         action="append",
         dest="prompt_labels",
         help="Langfuse prompt label to compare; repeat for multiple labels",
+    )
+    parser.add_argument(
+        "--llm-model",
+        action="append",
+        dest="llm_models",
+        help="LM Studio model id to run; repeat for multiple models",
+    )
+    parser.add_argument(
+        "--context-length",
+        type=int,
+        default=32768,
+        help="Context length to request when loading each model",
     )
     parser.add_argument(
         "--dataset-name",
@@ -258,11 +319,13 @@ def main(argv: list[str] | None = None) -> int:
     results = run_style_prompt_experiment(
         job_id=args.job_id,
         prompt_labels=args.prompt_labels,
+        llm_models=args.llm_models,
+        context_length=args.context_length,
         scratch_root=Path(args.scratch_root),
         dataset_name=args.dataset_name,
     )
     for item in results:
-        print(f"{item['prompt_label']}: {item['run_name']}")
+        print(f"{item['prompt_label']} [{item['llm_model']}]: {item['run_name']}")
         print(item["result"].format())
     return 0
 

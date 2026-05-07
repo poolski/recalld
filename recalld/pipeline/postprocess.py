@@ -237,7 +237,7 @@ def _sanitize_style_profile(text: str) -> str:
     return "\n".join(bullet_lines) if bullet_lines else DEFAULT_STYLE_PROFILE
 
 
-async def _build_style_profile(
+async def build_style_profile(
     client: LLMClient,
     turns: list[LabelledTurn],
     speaker_a_name: str,
@@ -274,6 +274,146 @@ async def _build_style_profile(
     except Exception:
         return DEFAULT_STYLE_PROFILE
     return _sanitize_style_profile(raw)
+
+
+async def generate_summary(
+    *,
+    turns: list[LabelledTurn],
+    llm_base_url: str,
+    llm_model: str,
+    token_budget: int,
+    style_profile: str = DEFAULT_STYLE_PROFILE,
+    progress_cb: Optional[Callable[[str], None]] = None,
+    stream_cb: Optional[Callable[[str], None]] = None,
+    event_cb: Optional[Callable[[str, dict], None]] = None,
+    speaker_a_name: str = "You",
+    speaker_b_name: str = "Speaker 2",
+    existing_note_content: str = "",
+    theme_guidance: list[ThemeSuggestion | dict | str] | None = None,
+    prompt_label: str | None = None,
+) -> PostProcessResult:
+    client = LLMClient(base_url=llm_base_url, model=llm_model)
+    style_block = f"\n\nStyle profile (from transcript sample):\n{_sanitize_style_profile(style_profile)}\n"
+    theme_block = _theme_guidance_block(theme_guidance)
+    scaffold_block = _note_scaffold_block(existing_note_content)
+    single_prompt_ref = resolve_text_prompt(
+        SUMMARY_SINGLE_PROMPT_NAME,
+        SYSTEM_PROMPT_TEMPLATE,
+        prompt_label=prompt_label,
+        speaker_a_name=speaker_a_name,
+        speaker_b_name=speaker_b_name,
+    )
+    reduce_prompt_ref = resolve_text_prompt(
+        SUMMARY_REDUCE_PROMPT_NAME,
+        REDUCE_SYSTEM_PROMPT_TEMPLATE,
+        prompt_label=prompt_label,
+        speaker_a_name=speaker_a_name,
+        speaker_b_name=speaker_b_name,
+    )
+    map_prompt_ref = resolve_text_prompt(
+        SUMMARY_MAP_PROMPT_NAME,
+        MAP_SYSTEM_PROMPT,
+        prompt_label=prompt_label,
+    )
+    single_prompt = (
+        _apply_prompt_variables(
+            single_prompt_ref.text,
+            speaker_a_name=speaker_a_name,
+            speaker_b_name=speaker_b_name,
+        )
+        + style_block
+        + theme_block
+        + scaffold_block
+    )
+    reduce_prompt = (
+        _apply_prompt_variables(
+            reduce_prompt_ref.text,
+            speaker_a_name=speaker_a_name,
+            speaker_b_name=speaker_b_name,
+        )
+        + style_block
+        + theme_block
+        + scaffold_block
+    )
+    if progress_cb:
+        progress_cb("Calculating context budget for summarization.")
+    effective_budget = _effective_transcript_budget(token_budget, single_prompt, reduce_prompt)
+    if progress_cb:
+        progress_cb("Selecting summarization strategy.")
+    strategy = chunk_transcript(turns, token_budget=effective_budget)
+
+    if strategy.strategy == "single":
+        if progress_cb:
+            progress_cb(
+                "Chunking strategy: single-pass summary (no transcript chunk splitting)."
+            )
+        transcript_text = _turns_to_text(turns)
+        raw = ""
+        async for token in stream_with_prompt(
+            client,
+            single_prompt,
+            transcript_text,
+            event_cb=event_cb,
+            prompt=single_prompt_ref.prompt,
+            metadata=single_prompt_ref.metadata,
+        ):
+            raw += token
+            if stream_cb:
+                stream_cb(parse_summary(raw))
+
+        return PostProcessResult(
+            summary=parse_summary(raw),
+            focus_points=parse_focus_points(raw),
+            raw_response=raw,
+            strategy="single",
+            topic_count=strategy.topic_count,
+        )
+
+    if progress_cb:
+        progress_cb(
+            f"Chunking strategy: map-reduce across {len(strategy.chunks)} chunks "
+            f"(topic count: {strategy.topic_count})."
+        )
+
+    partial_summaries = []
+    for i, chunk in enumerate(strategy.chunks):
+        chunk_text = _turns_to_text(chunk)
+        if progress_cb:
+            progress_cb(f"Summarising chunk {i + 1}/{len(strategy.chunks)}.")
+        partial = await complete_with_prompt(
+            client,
+            map_prompt_ref.text,
+            chunk_text,
+            prompt=map_prompt_ref.prompt,
+            metadata=map_prompt_ref.metadata,
+        )
+        partial_summaries.append(partial)
+        if progress_cb:
+            progress_cb(f"Completed chunk {i + 1}/{len(strategy.chunks)}.")
+
+    if progress_cb:
+        progress_cb("Reducing chunk summaries into final transcript summary.")
+    combined = "\n\n---\n\n".join(partial_summaries)
+    raw = ""
+    async for token in stream_with_prompt(
+        client,
+        reduce_prompt,
+        combined,
+        event_cb=event_cb,
+        prompt=reduce_prompt_ref.prompt,
+        metadata=reduce_prompt_ref.metadata,
+    ):
+        raw += token
+        if stream_cb:
+            stream_cb(parse_summary(raw))
+
+    return PostProcessResult(
+        summary=parse_summary(raw),
+        focus_points=parse_focus_points(raw),
+        raw_response=raw,
+        strategy="map_reduce",
+        topic_count=strategy.topic_count,
+    )
 
 
 def _effective_transcript_budget(token_budget: int, *prompts: str) -> int:
@@ -370,135 +510,25 @@ async def postprocess(
     client = LLMClient(base_url=llm_base_url, model=llm_model)
     if progress_cb:
         progress_cb("Detecting style from transcript sample.")
-    style_profile = await _build_style_profile(
+    style_profile = await build_style_profile(
         client,
         turns=turns,
         speaker_a_name=speaker_a_name,
         speaker_b_name=speaker_b_name,
         prompt_label=prompt_label,
     )
-    style_block = f"\n\nStyle profile (from transcript sample):\n{style_profile}\n"
-    theme_block = _theme_guidance_block(theme_guidance)
-    scaffold_block = _note_scaffold_block(existing_note_content)
-    single_prompt_ref = resolve_text_prompt(
-        SUMMARY_SINGLE_PROMPT_NAME,
-        SYSTEM_PROMPT_TEMPLATE,
-        prompt_label=prompt_label,
-        speaker_a_name=speaker_a_name,
-        speaker_b_name=speaker_b_name,
-    )
-    reduce_prompt_ref = resolve_text_prompt(
-        SUMMARY_REDUCE_PROMPT_NAME,
-        REDUCE_SYSTEM_PROMPT_TEMPLATE,
-        prompt_label=prompt_label,
-        speaker_a_name=speaker_a_name,
-        speaker_b_name=speaker_b_name,
-    )
-    map_prompt_ref = resolve_text_prompt(
-        SUMMARY_MAP_PROMPT_NAME,
-        MAP_SYSTEM_PROMPT,
-        prompt_label=prompt_label,
-    )
-    single_prompt = (
-        _apply_prompt_variables(
-            single_prompt_ref.text,
-            speaker_a_name=speaker_a_name,
-            speaker_b_name=speaker_b_name,
-        )
-        + style_block
-        + theme_block
-        + scaffold_block
-    )
-    reduce_prompt = (
-        _apply_prompt_variables(
-            reduce_prompt_ref.text,
-            speaker_a_name=speaker_a_name,
-            speaker_b_name=speaker_b_name,
-        )
-        + style_block
-        + theme_block
-        + scaffold_block
-    )
-    if progress_cb:
-        progress_cb("Calculating context budget for summarization.")
-    effective_budget = _effective_transcript_budget(
-        token_budget, single_prompt, reduce_prompt
-    )
-    if progress_cb:
-        progress_cb("Selecting summarization strategy.")
-    strategy = chunk_transcript(turns, token_budget=effective_budget)
-
-    if strategy.strategy == "single":
-        if progress_cb:
-            progress_cb(
-                "Chunking strategy: single-pass summary (no transcript chunk splitting)."
-        )
-        transcript_text = _turns_to_text(turns)
-        raw = ""
-        async for token in stream_with_prompt(
-            client,
-            single_prompt,
-            transcript_text,
-            event_cb=event_cb,
-            prompt=single_prompt_ref.prompt,
-            metadata=single_prompt_ref.metadata,
-        ):
-            raw += token
-            if stream_cb:
-                stream_cb(parse_summary(raw))
-
-        return PostProcessResult(
-            summary=parse_summary(raw),
-            focus_points=parse_focus_points(raw),
-            raw_response=raw,
-            strategy="single",
-            topic_count=strategy.topic_count,
-        )
-
-    # Map phase
-    if progress_cb:
-        progress_cb(
-            f"Chunking strategy: map-reduce across {len(strategy.chunks)} chunks "
-            f"(topic count: {strategy.topic_count})."
-        )
-
-    partial_summaries = []
-    for i, chunk in enumerate(strategy.chunks):
-        chunk_text = _turns_to_text(chunk)
-        if progress_cb:
-            progress_cb(f"Summarising chunk {i + 1}/{len(strategy.chunks)}.")
-        partial = await complete_with_prompt(
-            client,
-            map_prompt_ref.text,
-            chunk_text,
-            prompt=map_prompt_ref.prompt,
-            metadata=map_prompt_ref.metadata,
-        )
-        partial_summaries.append(partial)
-        if progress_cb:
-            progress_cb(f"Completed chunk {i + 1}/{len(strategy.chunks)}.")
-
-    # Reduce phase
-    if progress_cb:
-        progress_cb("Reducing chunk summaries into final transcript summary.")
-    combined = "\n\n---\n\n".join(partial_summaries)
-    raw = ""
-    async for token in stream_with_prompt(
-        client,
-        reduce_prompt,
-        combined,
+    return await generate_summary(
+        turns=turns,
+        llm_base_url=llm_base_url,
+        llm_model=llm_model,
+        token_budget=token_budget,
+        style_profile=style_profile,
+        progress_cb=progress_cb,
+        stream_cb=stream_cb,
         event_cb=event_cb,
-        prompt=reduce_prompt_ref.prompt,
-        metadata=reduce_prompt_ref.metadata,
-    ):
-        raw += token
-        if stream_cb:
-            stream_cb(parse_summary(raw))
-
-    return PostProcessResult(
-        summary=parse_summary(raw),
-        focus_points=parse_focus_points(raw),
-        raw_response=raw,
-        strategy="map_reduce",
-        topic_count=strategy.topic_count,
+        speaker_a_name=speaker_a_name,
+        speaker_b_name=speaker_b_name,
+        existing_note_content=existing_note_content,
+        theme_guidance=theme_guidance,
+        prompt_label=prompt_label,
     )

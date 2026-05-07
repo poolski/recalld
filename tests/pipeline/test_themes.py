@@ -90,8 +90,8 @@ async def test_propose_themes_resolves_runtime_prompts_and_forwards_prompt_conte
         resolve_calls.append((name, variables))
         return resolved[name]
 
-    async def fake_complete(system, user, prompt=None, metadata=None):
-        complete_calls.append((system, prompt, metadata))
+    async def fake_complete(system, user, prompt=None, metadata=None, preset=None):
+        complete_calls.append((system, prompt, metadata, preset))
         return """
         [
           {"id": "theme-1", "title": "Launch planning", "notes": "Timeline and sequencing", "enabled": true},
@@ -114,4 +114,5 @@ async def test_propose_themes_resolves_runtime_prompts_and_forwards_prompt_conte
     assert result.strategy == "single"
     assert complete_calls[0][1] == "themes-single-prompt"
     assert complete_calls[0][2]["prompt_name"] == "recalld/themes-single"
+    assert complete_calls[0][3] == "@local:transcript-summariser"
     assert all(call[1].get("prompt_label") == "candidate" for call in resolve_calls)

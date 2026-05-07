@@ -17,7 +17,7 @@ from recalld.pipeline.themes import ThemeSuggestion, propose_themes
 from recalld.pipeline.transcribe import transcribe
 from recalld.pipeline.vault import VaultWriter, render_session_note, render_session_note_preview, render_focus_section
 from recalld.llm.prompts import resolve_text_prompt
-from recalld.tracing import create_trace_id, get_tracing_environment, start_observation
+from recalld.tracing import create_trace_id, get_tracing_environment, job_session_token, make_session_id, start_observation
 
 ROOT_TRACE_NAME = "conversation-processing"
 STAGE_TRACE_NAMES = {
@@ -218,6 +218,12 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
     trace_id = create_trace_id(seed=job.id)
     if trace_id:
         trace_context = {"trace_id": trace_id}
+    session_id = make_session_id(
+        job.current_stage.value,
+        job_session_token(job.id) or job.id,
+        job.created_at,
+        prefix="job",
+    )
 
     with start_observation(
         name=_trace_name(),
@@ -225,6 +231,7 @@ async def run_pipeline(job: Job, source_path: Path, cfg: Config) -> None:
         input=trace_input,
         metadata=trace_metadata,
         trace_context=trace_context,
+        session_id=session_id,
     ) as root_span:
         try:
             # --- Ingest ---

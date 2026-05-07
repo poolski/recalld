@@ -6,6 +6,7 @@ import respx
 
 from recalld.llm.client import LLMClient
 from recalld.llm.client import LLMRequestError
+from recalld.llm.client import LMSTUDIO_TRANSCRIPT_PRESET_ID
 
 
 @pytest.mark.asyncio
@@ -27,6 +28,7 @@ async def test_llm_client_uses_lmstudio_chat_endpoint_and_payload():
         "system_prompt": "You answer only in rhymes.",
         "input": "What is your favorite color?",
         "stream": False,
+        "preset": LMSTUDIO_TRANSCRIPT_PRESET_ID,
     }
     assert "## Summary" in result
 
@@ -161,6 +163,7 @@ async def test_llm_client_traces_complete_as_generation(monkeypatch):
         "system_prompt": "system",
         "input": "user",
         "stream": False,
+        "preset": LMSTUDIO_TRANSCRIPT_PRESET_ID,
     }
     assert calls[1] == ("enter", {})
     assert calls[2] == ("update", {"output": "ok"})
@@ -233,6 +236,7 @@ async def test_llm_client_stream_yields_partial_tokens():
         "system_prompt": "sys",
         "input": "user",
         "stream": True,
+        "preset": LMSTUDIO_TRANSCRIPT_PRESET_ID,
     }
     assert tokens == ["Part 1 ", "Part 2"]
 

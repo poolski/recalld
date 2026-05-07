@@ -96,12 +96,12 @@ async def test_postprocess_resolves_runtime_prompts_and_forwards_prompt_context(
     def fake_resolve(name, fallback, **variables):
         return resolved[name]
 
-    async def fake_complete(system, user, prompt=None, metadata=None):
-        complete_calls.append((system, prompt, metadata))
+    async def fake_complete(system, user, prompt=None, metadata=None, preset=None):
+        complete_calls.append((system, prompt, metadata, preset))
         return "- direct\n- concise"
 
-    async def fake_stream(system, user, event_cb=None, prompt=None, metadata=None):
-        stream_calls.append((system, prompt, metadata))
+    async def fake_stream(system, user, event_cb=None, prompt=None, metadata=None, preset=None):
+        stream_calls.append((system, prompt, metadata, preset))
         yield "## Summary\n\nA productive session exploring focus strategies.\n\n## Focus\n\n- [ ] Start mornings with planning\n"
 
     with patch("recalld.pipeline.postprocess.resolve_text_prompt", side_effect=fake_resolve), \
@@ -119,8 +119,10 @@ async def test_postprocess_resolves_runtime_prompts_and_forwards_prompt_context(
     assert result.strategy == "single"
     assert complete_calls[0][1] == "style-prompt"
     assert complete_calls[0][2]["prompt_name"] == "recalld/postprocess-style-analysis"
+    assert complete_calls[0][3] == "@local:transcript-summariser"
     assert stream_calls[0][1] == "summary-single-prompt"
     assert stream_calls[0][2]["prompt_name"] == "recalld/postprocess-summary-single"
+    assert stream_calls[0][3] == "@local:transcript-summariser"
 
 
 @pytest.mark.asyncio
@@ -144,14 +146,22 @@ async def test_postprocess_map_reduce_calls_llm_multiple_times():
         instance = MockClient.return_value
         instance.complete = fake_complete
         instance.stream = fake_stream
-        progress = []
-        await postprocess(
-            turns=turns,
-            llm_base_url="http://localhost:1234/v1",
-            llm_model="qwen",
-            token_budget=50,
-            progress_cb=lambda msg: progress.append(msg),
-        )
+        with patch(
+            "recalld.pipeline.postprocess.chunk_transcript",
+            return_value=SimpleNamespace(
+                strategy="map_reduce",
+                chunks=[turns[: len(turns) // 2], turns[len(turns) // 2 :]],
+                topic_count=2,
+            ),
+        ):
+            progress = []
+            await postprocess(
+                turns=turns,
+                llm_base_url="http://localhost:1234/v1",
+                llm_model="qwen",
+                token_budget=50,
+                progress_cb=lambda msg: progress.append(msg),
+            )
     # Map (several calls to complete) + Reduce (one call to stream)
     assert call_count > 1
     assert any("Detecting style from transcript sample." in p for p in progress)
@@ -175,14 +185,18 @@ async def test_postprocess_uses_single_request_when_transcript_fits_provider_bud
         instance = MockClient.return_value
         instance.complete = AsyncMock(return_value="- direct\n- concise")
         instance.stream = fake_stream
-        progress = []
-        result = await postprocess(
-            turns=turns,
-            llm_base_url="http://localhost:1234/v1",
-            llm_model="qwen",
-            token_budget=2000,
-            progress_cb=lambda msg: progress.append(msg),
-        )
+        with patch(
+            "recalld.pipeline.postprocess.chunk_transcript",
+            return_value=SimpleNamespace(strategy="single", chunks=[turns], topic_count=1),
+        ):
+            progress = []
+            result = await postprocess(
+                turns=turns,
+                llm_base_url="http://localhost:1234/v1",
+                llm_model="qwen",
+                token_budget=2000,
+                progress_cb=lambda msg: progress.append(msg),
+            )
 
     assert call_count == 1
     assert result.strategy == "single"
@@ -581,13 +595,17 @@ async def test_postprocess_calls_stream_cb_with_partial_summary():
         instance = MockClient.return_value
         instance.complete = AsyncMock(return_value="- direct\n- concise")
         instance.stream = fake_stream
-        await postprocess(
-            turns=turns,
-            llm_base_url="http://localhost:1234/v1",
-            llm_model="qwen",
-            token_budget=1000,
-            stream_cb=lambda text: updates.append(text)
-        )
+        with patch(
+            "recalld.pipeline.postprocess.chunk_transcript",
+            return_value=SimpleNamespace(strategy="single", chunks=[turns], topic_count=1),
+        ):
+            await postprocess(
+                turns=turns,
+                llm_base_url="http://localhost:1234/v1",
+                llm_model="qwen",
+                token_budget=1000,
+                stream_cb=lambda text: updates.append(text)
+            )
 
     assert "Part 1" in updates[0]
     assert "Part 1 Part 2" in updates[1]
@@ -613,13 +631,17 @@ async def test_postprocess_forwards_lmstudio_stream_events():
         instance = MockClient.return_value
         instance.complete = AsyncMock(return_value="- direct\n- concise")
         instance.stream = fake_stream
-        await postprocess(
-            turns=turns,
-            llm_base_url="http://localhost:1234/v1",
-            llm_model="qwen",
-            token_budget=1000,
-            event_cb=lambda event_type, data: captured.append(event_type),
-        )
+        with patch(
+            "recalld.pipeline.postprocess.chunk_transcript",
+            return_value=SimpleNamespace(strategy="single", chunks=[turns], topic_count=1),
+        ):
+            await postprocess(
+                turns=turns,
+                llm_base_url="http://localhost:1234/v1",
+                llm_model="qwen",
+                token_budget=1000,
+                event_cb=lambda event_type, data: captured.append(event_type),
+            )
 
     assert captured == [
         "prompt_processing.start",

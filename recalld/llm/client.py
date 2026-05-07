@@ -7,6 +7,8 @@ import httpx
 
 from recalld.tracing import start_observation
 
+LMSTUDIO_TRANSCRIPT_PRESET_ID = "@local:transcript-summariser"
+
 
 class LLMRequestError(RuntimeError):
     pass
@@ -38,13 +40,24 @@ class LLMClient:
     def _models_load_url(self) -> str:
         return self._api_v1_url("/models/load")
 
-    def _chat_payload(self, system: str, user: str, stream: bool) -> dict:
+    def _models_unload_url(self) -> str:
+        return self._api_v1_url("/models/unload")
+
+    def _chat_payload(
+        self,
+        system: str,
+        user: str,
+        stream: bool,
+        preset: str | None = LMSTUDIO_TRANSCRIPT_PRESET_ID,
+    ) -> dict:
         payload = {
             "model": self.model,
             "system_prompt": system,
             "input": user,
             "stream": stream,
         }
+        if preset:
+            payload["preset"] = preset
         return payload
 
     def _extract_error_message(self, resp: httpx.Response) -> str:
@@ -93,12 +106,22 @@ class LLMClient:
                 return "\n".join(part for part in message_parts if part)
         return ""
 
-    async def complete(self, system: str, user: str, *, prompt: Any | None = None, metadata: dict[str, Any] | None = None) -> str:
+    async def complete(
+        self,
+        system: str,
+        user: str,
+        *,
+        prompt: Any | None = None,
+        metadata: dict[str, Any] | None = None,
+        preset: str | None = LMSTUDIO_TRANSCRIPT_PRESET_ID,
+    ) -> str:
         """Send an LM Studio chat request. Returns the output text."""
-        payload = self._chat_payload(system, user, stream=False)
+        payload = self._chat_payload(system, user, stream=False, preset=preset)
         observation_metadata = {"base_url": self.base_url, "stream": False}
         if metadata:
             observation_metadata.update(metadata)
+        if preset:
+            observation_metadata["preset"] = preset
         with start_observation(
             name="lmstudio.chat",
             as_type="generation",
@@ -138,6 +161,21 @@ class LLMClient:
                 observation.update(output=data)
                 return data
 
+    async def unload_model(self, instance_id: str | None = None) -> dict:
+        payload = {"instance_id": instance_id or self.model}
+        with start_observation(
+            name="lmstudio.unload-model",
+            as_type="span",
+            input=payload,
+            metadata={"base_url": self.base_url},
+        ) as observation:
+            async with httpx.AsyncClient(verify=False, timeout=self.timeout) as client:
+                resp = await client.post(self._models_unload_url(), json=payload, headers=self._headers())
+                resp.raise_for_status()
+                data = resp.json()
+                observation.update(output=data)
+                return data
+
     async def stream(
         self,
         system: str,
@@ -146,14 +184,17 @@ class LLMClient:
         *,
         prompt: Any | None = None,
         metadata: dict[str, Any] | None = None,
+        preset: str | None = LMSTUDIO_TRANSCRIPT_PRESET_ID,
     ):
         """Send a streaming LM Studio chat request. Yields partial content tokens."""
         import json
-        payload = self._chat_payload(system, user, stream=True)
+        payload = self._chat_payload(system, user, stream=True, preset=preset)
         output_parts: list[str] = []
         observation_metadata = {"base_url": self.base_url, "stream": True}
         if metadata:
             observation_metadata.update(metadata)
+        if preset:
+            observation_metadata["preset"] = preset
         with start_observation(
             name="lmstudio.chat",
             as_type="generation",
@@ -218,16 +259,19 @@ async def complete_with_prompt(
     *,
     prompt: Any | None = None,
     metadata: dict[str, Any] | None = None,
+    preset: str | None = LMSTUDIO_TRANSCRIPT_PRESET_ID,
 ) -> str:
     kwargs: dict[str, Any] = {}
     if prompt is not None:
         kwargs["prompt"] = prompt
     if metadata is not None:
         kwargs["metadata"] = metadata
+    kwargs["preset"] = preset
     try:
         return await client.complete(system, user, **kwargs)
     except TypeError as exc:
         if "unexpected keyword argument" in str(exc):
+            kwargs.pop("preset", None)
             return await client.complete(system, user)
         raise
 
@@ -240,6 +284,7 @@ async def stream_with_prompt(
     event_cb: Optional[Callable[[str, dict], None]] = None,
     prompt: Any | None = None,
     metadata: dict[str, Any] | None = None,
+    preset: str | None = LMSTUDIO_TRANSCRIPT_PRESET_ID,
 ):
     kwargs: dict[str, Any] = {}
     if event_cb is not None:
@@ -248,6 +293,7 @@ async def stream_with_prompt(
         kwargs["prompt"] = prompt
     if metadata is not None:
         kwargs["metadata"] = metadata
+    kwargs["preset"] = preset
     try:
         async for token in client.stream(system, user, **kwargs):
             yield token

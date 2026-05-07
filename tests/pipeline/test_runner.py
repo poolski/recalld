@@ -62,6 +62,58 @@ async def test_pipeline_waits_for_vault_confirmation(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_pipeline_uses_job_id_suffix_for_session_id(tmp_path, monkeypatch):
+    monkeypatch.setattr("recalld.pipeline.runner.DEFAULT_SCRATCH_ROOT", tmp_path)
+
+    job = create_job(category_id="cat-1", original_filename="session.m4a", scratch_root=tmp_path)
+    scratch = tmp_path / job.id
+    aligned_path = scratch / "aligned.json"
+    aligned_path.write_text(json.dumps([
+        LabelledTurn(speaker="You", start=0.0, end=1.0, text="Hello").__dict__,
+    ]))
+    job.aligned_path = str(aligned_path)
+    job.current_stage = JobStage.postprocess
+    job.filename = "2026-04-29 Project Alpha Meeting.md"
+    save_job(job, scratch_root=tmp_path)
+
+    cfg = Config(
+        llm_model="test-model",
+        llm_reasoning="off",
+        categories=[Category(id="cat-1", name="Planning", vault_path="Notes/Sessions")],
+    )
+    result = PostProcessResult(
+        summary="Summary",
+        focus_points=["Follow up"],
+        raw_response="",
+        strategy="single",
+        topic_count=1,
+    )
+    observations: list[dict] = []
+
+    class _FakeObservation:
+        def update(self, **kwargs):
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def fake_start_observation(**kwargs):
+        observations.append(kwargs)
+        return _FakeObservation()
+
+    with patch("recalld.pipeline.runner.start_observation", side_effect=fake_start_observation), \
+         patch("recalld.pipeline.runner.ensure_loaded_context_length", AsyncMock(return_value=1000)), \
+         patch("recalld.pipeline.runner.postprocess", AsyncMock(return_value=result)):
+        await run_pipeline(job, scratch / "session.m4a", cfg)
+
+    root_session_id = observations[0]["session_id"]
+    assert root_session_id.startswith(f"job-postprocess-{job.id[-6:]}-")
+
+
+@pytest.mark.asyncio
 async def test_pipeline_appends_to_existing_vault_note_when_requested(tmp_path, monkeypatch):
     monkeypatch.setattr("recalld.pipeline.runner.DEFAULT_SCRATCH_ROOT", tmp_path)
 
@@ -196,8 +248,8 @@ async def test_note_title_inference_uses_runtime_prompt_loader(tmp_path, monkeyp
     def fake_resolve(name, fallback, **variables):
         return prompt
 
-    async def fake_complete(system, user, prompt=None, metadata=None):
-        calls.append({"system": system, "prompt": prompt, "metadata": metadata})
+    async def fake_complete(system, user, prompt=None, metadata=None, preset=None):
+        calls.append({"system": system, "prompt": prompt, "metadata": metadata, "preset": preset})
         return "2026-05-06 Project Alpha Meeting"
 
     with patch("recalld.pipeline.runner.resolve_text_prompt", side_effect=fake_resolve), \
@@ -209,6 +261,7 @@ async def test_note_title_inference_uses_runtime_prompt_loader(tmp_path, monkeyp
     assert result == f"{job.created_at.date().isoformat()} Project Alpha Meeting.md"
     assert calls[0]["prompt"] == "title-prompt"
     assert calls[0]["metadata"]["prompt_name"] == "recalld/note-title"
+    assert calls[0]["preset"] == "@local:transcript-summariser"
 
 
 @pytest.mark.asyncio

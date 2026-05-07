@@ -99,3 +99,30 @@ def test_themes_experiment_dispatches_to_recalld_runner(monkeypatch):
     assert captured["job_id"] == "job-123"
     assert captured["prompt_labels"] == ["candidate"]
     assert captured["clone_from_label"] == "production"
+
+
+def test_focus_experiment_dispatches_to_recalld_runner(monkeypatch):
+    script = _load_script()
+    captured = {}
+
+    def fake_run_focus_prompt_experiment(**kwargs):
+        captured.update(kwargs)
+        return [{"prompt_label": "candidate", "run_name": "run-1", "result": SimpleNamespace(format=lambda: "ok")}]
+
+    monkeypatch.setattr(
+        "recalld.experiments.langfuse_focus.run_focus_prompt_experiment",
+        fake_run_focus_prompt_experiment,
+    )
+
+    args = SimpleNamespace(
+        job_id="job-123",
+        prompt_label=["candidate"],
+        clone_from_label="production",
+        dataset_name="dataset-1",
+        scratch_root="/tmp/scratch",
+    )
+
+    assert script._cmd_focus_experiment(args) == 0
+    assert captured["job_id"] == "job-123"
+    assert captured["prompt_labels"] == ["candidate"]
+    assert captured["clone_from_label"] == "production"

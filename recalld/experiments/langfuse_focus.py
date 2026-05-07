@@ -2,12 +2,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
-import re
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
@@ -18,10 +15,11 @@ from recalld.experiments import experiment_description
 from recalld.experiments import prompt_version as get_prompt_version
 from recalld.experiments.langfuse_evaluation_rules import ensure_evaluator_rules_include_dataset
 from recalld.experiments.langfuse_session_scores import mirror_experiment_scores_to_session
-from recalld.jobs import DEFAULT_SCRATCH_ROOT, load_job
+from recalld.experiments.langfuse_summary import load_summary_experiment_context
+from recalld.jobs import DEFAULT_SCRATCH_ROOT
 from recalld.llm.context import ensure_loaded_context_length, list_available_models, token_budget
 from recalld.pipeline.align import LabelledTurn
-from recalld.pipeline.postprocess import DEFAULT_STYLE_PROFILE, generate_summary
+from recalld.pipeline.focus import generate_focus_points
 from recalld.tracing import (
     experiment_tracing_environment,
     get_langfuse_client,
@@ -32,18 +30,13 @@ from recalld.tracing import (
     update_current_span,
 )
 
-DEFAULT_DATASET_SUFFIX = "summary"
+DEFAULT_DATASET_SUFFIX = "focus"
 DEFAULT_PROMPT_LABELS = ("production",)
-SUMMARY_PROMPT_NAMES = (
-    "recalld/postprocess-style-analysis",
-    "recalld/postprocess-summary-single",
-    "recalld/postprocess-summary-reduce",
-    "recalld/postprocess-summary-map",
-)
+FOCUS_PROMPT_NAME = "recalld/focus-instructions"
 
 
 @dataclass(frozen=True)
-class SummaryExperimentContext:
+class FocusExperimentContext:
     job_id: str
     dataset_name: str
     dataset_item_id: str
@@ -52,61 +45,20 @@ class SummaryExperimentContext:
     original_filename: str = ""
 
 
-def _read_json(path: Path) -> Any:
-    return json.loads(path.read_text())
-
-
-def _load_aligned_turns(job_id: str, scratch_root: Path) -> list[LabelledTurn]:
-    job = load_job(job_id, scratch_root=scratch_root)
-    if not job.aligned_path:
-        raise ValueError(f"job {job_id} does not have aligned transcript output")
-    path = Path(job.aligned_path)
-    if not path.exists():
-        raise FileNotFoundError(path)
-    return [LabelledTurn(**turn) for turn in _read_json(path)]
-
-
-def load_summary_experiment_context(
+def load_focus_experiment_context(
     job_id: str,
     scratch_root: Path = DEFAULT_SCRATCH_ROOT,
-) -> SummaryExperimentContext:
-    job = load_job(job_id, scratch_root=scratch_root)
-    aligned_turns = _load_aligned_turns(job_id, scratch_root)
-
-    if not job.postprocess_path:
-        raise ValueError(f"job {job_id} does not have postprocess output")
-    postprocess_path = Path(job.postprocess_path)
-    if not postprocess_path.exists():
-        raise FileNotFoundError(postprocess_path)
-    reference = _read_json(postprocess_path)
-    if not isinstance(reference, dict):
-        raise ValueError(f"expected postprocess output for job {job_id} to be a JSON object")
-
-    input_data = {
-        "job_id": job.id,
-        "category_id": job.category_id,
-        "original_filename": job.original_filename,
-        "speaker_a_name": job.speaker_00 or "You",
-        "speaker_b_name": job.speaker_01 or "Speaker 2",
-        "aligned_turns": [turn.__dict__.copy() for turn in aligned_turns],
-        "theme_guidance": job.theme_guidance,
-        "existing_note_content": "",
-    }
-    expected_output = {
-        "summary": reference.get("summary", ""),
-        "focus_points": reference.get("focus_points", []),
-        "strategy": reference.get("strategy", ""),
-        "topic_count": reference.get("topic_count"),
-    }
-    dataset_name = f"recalld/jobs/{job.id}/{DEFAULT_DATASET_SUFFIX}"
-    dataset_item_id = f"job-{job.id}-summary"
-    return SummaryExperimentContext(
-        job_id=job.id,
+) -> FocusExperimentContext:
+    summary_ctx = load_summary_experiment_context(job_id, scratch_root=scratch_root)
+    dataset_name = f"recalld/jobs/{job_id}/{DEFAULT_DATASET_SUFFIX}"
+    dataset_item_id = f"job-{job_id}-focus"
+    return FocusExperimentContext(
+        job_id=summary_ctx.job_id,
         dataset_name=dataset_name,
         dataset_item_id=dataset_item_id,
-        input_data=input_data,
-        expected_output=expected_output,
-        original_filename=job.original_filename or "",
+        input_data=summary_ctx.input_data,
+        expected_output={"focus_points": summary_ctx.expected_output.get("focus_points", [])},
+        original_filename=summary_ctx.original_filename,
     )
 
 
@@ -114,14 +66,7 @@ def _normalize_text(value: Any) -> str:
     if value is None:
         return ""
     text = str(value).lower()
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
-
-
-def _summary_similarity(candidate: str, reference: str) -> float:
-    if not reference:
-        return 1.0 if not candidate else 0.0
-    return SequenceMatcher(None, _normalize_text(candidate), _normalize_text(reference)).ratio()
+    return " ".join(text.split())
 
 
 def _focus_overlap(candidate: Any, reference: Any) -> float:
@@ -134,39 +79,40 @@ def _focus_overlap(candidate: Any, reference: Any) -> float:
     return len(candidate_items & reference_items) / len(reference_items)
 
 
-def make_summary_alignment_evaluator(prompt_label: str):
+def _count_similarity(candidate: Any, reference: Any) -> float:
+    candidate_items = list(candidate or [])
+    reference_items = list(reference or [])
+    if not reference_items:
+        return 1.0 if not candidate_items else 0.0
+    if not candidate_items:
+        return 0.0
+    largest = max(len(candidate_items), len(reference_items))
+    return max(0.0, 1.0 - (abs(len(candidate_items) - len(reference_items)) / largest))
+
+
+def make_focus_alignment_evaluator(prompt_label: str):
     def evaluator(*, input, output, expected_output, metadata, **kwargs) -> Evaluation:
-        candidate_summary = ""
         candidate_focus = []
         if isinstance(output, dict):
-            candidate_summary = str(output.get("summary", ""))
             candidate_focus = output.get("focus_points", []) or []
-        else:
-            candidate_summary = str(output or "")
-
-        reference_summary = ""
         reference_focus = []
         if isinstance(expected_output, dict):
-            reference_summary = str(expected_output.get("summary", ""))
             reference_focus = expected_output.get("focus_points", []) or []
-        else:
-            reference_summary = str(expected_output or "")
-
-        summary_score = _summary_similarity(candidate_summary, reference_summary)
         focus_score = _focus_overlap(candidate_focus, reference_focus)
-        overall = round((summary_score * 0.75) + (focus_score * 0.25), 3)
+        count_score = _count_similarity(candidate_focus, reference_focus)
+        overall = round((focus_score * 0.8) + (count_score * 0.2), 3)
         comment = (
-            f"summary_similarity={summary_score:.3f}; "
             f"focus_overlap={focus_score:.3f}; "
+            f"count_similarity={count_score:.3f}; "
             f"prompt_label={prompt_label}"
         )
         return Evaluation(name="reference_alignment", value=overall, comment=comment)
 
-    evaluator.__name__ = f"summary_alignment_evaluator[{prompt_label}]"
+    evaluator.__name__ = f"focus_alignment_evaluator[{prompt_label}]"
     return evaluator
 
 
-async def _generate_summary(
+async def _generate_focus_points(
     *,
     input_data: dict[str, Any],
     prompt_label: str,
@@ -175,20 +121,16 @@ async def _generate_summary(
     token_budget_value: int,
 ) -> dict[str, Any]:
     turns = [LabelledTurn(**turn) for turn in input_data["aligned_turns"]]
-    result = await generate_summary(
+    result = await generate_focus_points(
         turns=turns,
         llm_base_url=llm_base_url,
         llm_model=llm_model,
         token_budget=token_budget_value,
-        style_profile=DEFAULT_STYLE_PROFILE,
         speaker_a_name=input_data.get("speaker_a_name", "You"),
         speaker_b_name=input_data.get("speaker_b_name", "Speaker 2"),
-        existing_note_content=input_data.get("existing_note_content", ""),
-        theme_guidance=input_data.get("theme_guidance", []),
         prompt_label=prompt_label,
     )
     return {
-        "summary": result.summary,
         "focus_points": result.focus_points,
         "strategy": result.strategy,
         "topic_count": result.topic_count,
@@ -239,17 +181,17 @@ def _run_coro_sync(coro):
     return result.get("value")
 
 
-def _ensure_dataset(client, context: SummaryExperimentContext):
+def _ensure_dataset(client, context: FocusExperimentContext):
     try:
         dataset = client.get_dataset(context.dataset_name)
         existing_ids = {item.id for item in dataset.items}
     except Exception:
         client.create_dataset(
             name=context.dataset_name,
-            description=f"Prompt tuning experiment for job {context.job_id}",
+            description=f"Focus sub-prompt experiment for job {context.job_id}",
             metadata={
                 "job_id": context.job_id,
-                "type": "summary_prompt_experiment",
+                "type": "focus_prompt_experiment",
             },
         )
         existing_ids = set()
@@ -262,34 +204,15 @@ def _ensure_dataset(client, context: SummaryExperimentContext):
             expected_output=context.expected_output,
             metadata={
                 "job_id": context.job_id,
-                "type": "summary_prompt_experiment",
+                "type": "focus_prompt_experiment",
             },
         )
     dataset = client.get_dataset(context.dataset_name)
-    ensure_evaluator_rules_include_dataset(dataset.id, dataset_kind="summary", client=client)
+    ensure_evaluator_rules_include_dataset(dataset.id, dataset_kind="focus", client=client)
     return dataset
 
 
-def clone_prompt_label(
-    *,
-    source_label: str,
-    target_label: str,
-    prompt_names: tuple[str, ...] = SUMMARY_PROMPT_NAMES,
-    client=None,
-) -> None:
-    client = client or get_langfuse_client()
-    if client is None:
-        raise RuntimeError("Langfuse credentials are unavailable; cannot clone prompts.")
-
-    for prompt_name in prompt_names:
-        prompt = client.get_prompt(prompt_name, label=source_label)
-        version = getattr(prompt, "version", None)
-        if version is None:
-            raise RuntimeError(f"prompt {prompt_name} did not expose a version")
-        client.update_prompt(name=prompt_name, version=version, new_labels=[target_label])
-
-
-def run_summary_prompt_experiment(
+def run_focus_prompt_experiment(
     *,
     job_id: str,
     prompt_labels: list[str] | None = None,
@@ -307,14 +230,15 @@ def run_summary_prompt_experiment(
             if client is None:
                 raise RuntimeError("Langfuse credentials are unavailable; cannot run experiment.")
 
-            context = load_summary_experiment_context(job_id, scratch_root=scratch_root)
+            context = load_focus_experiment_context(job_id, scratch_root=scratch_root)
             if dataset_name:
-                context = SummaryExperimentContext(
+                context = FocusExperimentContext(
                     job_id=context.job_id,
                     dataset_name=dataset_name,
                     dataset_item_id=context.dataset_item_id,
                     input_data=context.input_data,
                     expected_output=context.expected_output,
+                    original_filename=context.original_filename,
                 )
 
             dataset = _ensure_dataset(client, context)
@@ -332,12 +256,15 @@ def run_summary_prompt_experiment(
             run_results: list[dict[str, Any]] = []
 
             if clone_from_label:
+                from recalld.experiments.langfuse_summary import clone_prompt_label
+
                 for prompt_label in labels:
                     if prompt_label == clone_from_label:
                         continue
                     clone_prompt_label(
                         source_label=clone_from_label,
                         target_label=prompt_label,
+                        prompt_names=(FOCUS_PROMPT_NAME,),
                         client=client,
                     )
 
@@ -351,9 +278,9 @@ def run_summary_prompt_experiment(
                 )
                 target_budget = token_budget(target_context_length, headroom)
                 for prompt_label in labels:
-                    run_name = _run_name("summary", context.original_filename, prompt_label, model_id, target_context_length, run_tag)
+                    run_name = _run_name("focus", context.original_filename, prompt_label, model_id, target_context_length, run_tag)
                     run_session_id = make_session_id(
-                        "summary",
+                        "focus",
                         job_session_token(context.job_id) or context.job_id,
                         prompt_label,
                         model_id,
@@ -363,9 +290,9 @@ def run_summary_prompt_experiment(
                     )
 
                     def task(*, item, **kwargs):
-                        update_current_span(name=f"summarise · {filename} · {prompt_label} · {model_id}")
+                        update_current_span(name=f"focus · {filename} · {prompt_label} · {model_id}")
                         return _run_coro_sync(
-                            _generate_summary(
+                            _generate_focus_points(
                                 input_data=item.input,
                                 prompt_label=prompt_label,
                                 llm_base_url=llm_base_url,
@@ -378,9 +305,9 @@ def run_summary_prompt_experiment(
                     default_name = " ".join([model_id, prompt_label] + tag_parts)
                     exp_name = experiment_name or default_name
                     filename = Path(context.original_filename).stem if context.original_filename else context.job_id
-                    pv = get_prompt_version(client, "recalld/postprocess-summary-single", prompt_label)
+                    pv = get_prompt_version(client, FOCUS_PROMPT_NAME, prompt_label)
                     exp_description = experiment_description(
-                        exp_type="summary",
+                        exp_type="focus",
                         filename=filename,
                         prompt_label=prompt_label,
                         prompt_version=pv,
@@ -394,7 +321,7 @@ def run_summary_prompt_experiment(
                         "prompt_label": prompt_label,
                         "llm_model": model_id,
                         "context_length": target_context_length,
-                        "experiment_name": "summary",
+                        "experiment_name": "focus",
                     }
                     if run_tag:
                         meta["run_tag"] = run_tag
@@ -404,7 +331,7 @@ def run_summary_prompt_experiment(
                             run_name=run_name,
                             description=exp_description,
                             task=task,
-                            evaluators=[make_summary_alignment_evaluator(prompt_label)],
+                            evaluators=[make_focus_alignment_evaluator(prompt_label)],
                             max_concurrency=1,
                             metadata=meta,
                         )
@@ -433,7 +360,7 @@ def run_summary_prompt_experiment(
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run a Langfuse summary prompt experiment for a saved recalld job."
+        description="Run a Langfuse focus prompt experiment for a saved recalld job."
     )
     parser.add_argument("--job-id", required=True, help="Saved recalld job id")
     parser.add_argument(
@@ -473,7 +400,7 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
-    results = run_summary_prompt_experiment(
+    results = run_focus_prompt_experiment(
         job_id=args.job_id,
         prompt_labels=args.prompt_labels,
         llm_models=args.llm_models,

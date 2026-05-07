@@ -2,8 +2,16 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from functools import lru_cache
+import re
 import os
+import unicodedata
+from datetime import datetime, timezone
 from typing import Any, Iterator
+
+try:
+    from langfuse import propagate_attributes as _propagate_attributes
+except Exception:  # pragma: no cover - optional SDK feature
+    _propagate_attributes = None
 
 
 class _NoopObservation:
@@ -87,6 +95,76 @@ def update_current_span(**kwargs: Any) -> None:
         return
 
 
+def _slugify_session_part(value: Any) -> str:
+    text = unicodedata.normalize("NFKD", str(value))
+    text = text.encode("ascii", "ignore").decode("ascii")
+    text = re.sub(r"[^A-Za-z0-9]+", "-", text)
+    return text.strip("-").lower()
+
+
+def make_session_id(
+    step: str | None = None,
+    *parts: Any,
+    prefix: str = "run",
+    timestamp: datetime | None = None,
+) -> str | None:
+    tokens = []
+    if step is not None:
+        step_token = _slugify_session_part(step)
+        if step_token:
+            tokens.append(step_token)
+    for part in parts:
+        if part is None:
+            continue
+        token = _slugify_session_part(part)
+        if token:
+            tokens.append(token)
+    if timestamp is not None:
+        ts = timestamp.astimezone(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        tokens.append(ts)
+    if not tokens:
+        return None
+    session_id = "-".join([prefix, *tokens]) if prefix else "-".join(tokens)
+    return session_id[:200]
+
+
+def job_session_token(job_id: str | None, length: int = 6) -> str | None:
+    if not job_id:
+        return None
+    text = str(job_id).strip()
+    if not text:
+        return None
+    return text[-length:]
+
+
+@contextmanager
+def experiment_tracing_environment(environment: str = "experiments") -> Iterator[None]:
+    previous = os.environ.get("LANGFUSE_TRACING_ENVIRONMENT")
+    if environment:
+        os.environ["LANGFUSE_TRACING_ENVIRONMENT"] = environment
+    else:
+        os.environ.pop("LANGFUSE_TRACING_ENVIRONMENT", None)
+    _get_client.cache_clear()
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("LANGFUSE_TRACING_ENVIRONMENT", None)
+        else:
+            os.environ["LANGFUSE_TRACING_ENVIRONMENT"] = previous
+        _get_client.cache_clear()
+
+
+@contextmanager
+def session_context(session_id: str | None) -> Iterator[None]:
+    if not session_id or _propagate_attributes is None:
+        yield
+        return
+
+    with _propagate_attributes(session_id=session_id):
+        yield
+
+
 @contextmanager
 def start_observation(
     *,
@@ -98,6 +176,7 @@ def start_observation(
     metadata: dict[str, Any] | None = None,
     trace_context: dict[str, str] | None = None,
     prompt: Any | None = None,
+    session_id: str | None = None,
 ) -> Iterator[Any]:
     client = _get_client()
     if client is None:
@@ -118,8 +197,9 @@ def start_observation(
     if prompt is not None:
         kwargs["prompt"] = prompt
 
-    with client.start_as_current_observation(**kwargs) as observation:
-        yield observation
+    with session_context(session_id):
+        with client.start_as_current_observation(**kwargs) as observation:
+            yield observation
 
 
 def shutdown_tracing() -> None:
