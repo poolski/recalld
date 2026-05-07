@@ -118,3 +118,11 @@ make lint
 - Scratch workspace is stored in `~/.local/share/recalld`.
 - The scratch workspace is created automatically on first run.
 - If the config file becomes invalid, delete it and restart the app.
+
+## Documentation
+
+- [Docs hub](docs/README.md)
+- [Project setup](docs/setup.md)
+- [Langfuse setup](docs/langfuse.md)
+- [Experiments](docs/experiments.md)
+- [Troubleshooting](docs/troubleshooting.md)
