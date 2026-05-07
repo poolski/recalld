@@ -93,6 +93,21 @@ def test_job_detail_shows_speaker_confirmation_controls(scratch, client):
     assert "Swap speakers" in resp.text
 
 
+def test_job_detail_shows_theme_confirmation_controls(scratch, client):
+    job = create_job(category_id="test", original_filename="audio.m4a", scratch_root=scratch)
+    job.current_stage = JobStage.themes
+    job.status = JobStatus.pending
+    job.stage_statuses["align"] = "done"
+    job.stage_statuses["themes"] = "awaiting_confirmation"
+    save_job(job, scratch_root=scratch)
+
+    resp = client.get(f"/jobs/{job.id}")
+
+    assert resp.status_code == 200
+    assert "Propose themes" in resp.text
+    assert "Confirm themes and summarize" in resp.text
+
+
 def test_job_detail_shows_rerun_buttons_for_failed_job(scratch, client):
     job = create_job(category_id="test", original_filename="audio.m4a", scratch_root=scratch)
     job.current_stage = JobStage.diarise
@@ -477,6 +492,50 @@ def test_job_state_returns_vault_preview(scratch, client, monkeypatch):
     assert "date:" not in resp.json()["vault_preview"]
 
 
+def test_job_state_returns_theme_payload(scratch, client):
+    job = create_job(category_id="test", original_filename="audio.m4a", scratch_root=scratch)
+    themes_path = scratch / job.id / "themes.json"
+    themes_path.write_text(json.dumps([
+        {"id": "theme-1", "title": "Planning next steps", "notes": "Follow up", "enabled": True, "order": 1, "source": "transcript"},
+        {"id": "theme-2", "title": "Blockers", "notes": "", "enabled": False, "order": 2, "source": "transcript"},
+    ]))
+    job.current_stage = JobStage.themes
+    job.themes_path = str(themes_path)
+    job.stage_statuses["align"] = "done"
+    job.stage_statuses["themes"] = "awaiting_confirmation"
+    save_job(job, scratch_root=scratch)
+
+    resp = client.get(f"/jobs/{job.id}/state")
+
+    assert resp.status_code == 200
+    assert resp.json()["can_confirm_themes"] is True
+    assert resp.json()["can_skip_themes"] is False
+    assert len(resp.json()["themes"]) == 2
+    assert resp.json()["themes"][0]["title"] == "Planning next steps"
+
+
+def test_job_json_persists_theme_guidance(scratch, client):
+    job = create_job(category_id="test", original_filename="audio.m4a", scratch_root=scratch)
+    job.current_stage = JobStage.themes
+    job.status = JobStatus.pending
+    job.stage_statuses["align"] = "done"
+    job.stage_statuses["themes"] = "awaiting_confirmation"
+    job.theme_count = 2
+    job.theme_strategy = "single"
+    job.theme_guidance = [
+        {"id": "theme-1", "title": "Planning next steps", "notes": "Follow up", "enabled": True, "order": 1, "source": "transcript"},
+        {"id": "theme-2", "title": "Blockers", "notes": "", "enabled": False, "order": 2, "source": "transcript"},
+    ]
+    save_job(job, scratch_root=scratch)
+
+    loaded = load_job(job.id, scratch_root=scratch)
+    assert loaded.theme_guidance == job.theme_guidance
+    assert loaded.theme_count == 2
+    assert loaded.theme_strategy == "single"
+    payload = json.loads((scratch / job.id / "job.json").read_text())
+    assert payload["theme_guidance"][0]["title"] == "Planning next steps"
+
+
 def test_confirm_speakers_resumes_pipeline(scratch, client, monkeypatch):
     job = create_job(category_id="test", original_filename="audio.m4a", scratch_root=scratch)
     (scratch / job.id / job.original_filename).write_bytes(b"audio")
@@ -507,10 +566,93 @@ def test_confirm_speakers_resumes_pipeline(scratch, client, monkeypatch):
 
     assert resp.status_code == 200
     updated = load_job(job.id, scratch_root=scratch)
-    assert updated.current_stage == JobStage.postprocess
+    assert updated.current_stage == JobStage.themes
     assert updated.status == JobStatus.running
     assert updated.stage_statuses["align"] == "done"
     assert "coro" in scheduled
+
+
+def test_confirm_themes_resumes_pipeline(scratch, client, monkeypatch):
+    job = create_job(category_id="test", original_filename="audio.m4a", scratch_root=scratch)
+    (scratch / job.id / job.original_filename).write_bytes(b"audio")
+    job.current_stage = JobStage.themes
+    job.status = JobStatus.pending
+    job.stage_statuses["align"] = "done"
+    job.stage_statuses["themes"] = "awaiting_confirmation"
+    job.aligned_path = str(scratch / job.id / "aligned.json")
+    job.themes_path = str(scratch / job.id / "themes.json")
+    save_job(job, scratch_root=scratch)
+
+    scheduled = {}
+
+    async def fake_run_pipeline(job_arg, source_arg, cfg_arg):
+        return None
+
+    def fake_create_task(coro):
+        scheduled["coro"] = coro
+        coro.close()
+        return None
+
+    monkeypatch.setattr("recalld.routers.jobs.run_pipeline", fake_run_pipeline)
+    monkeypatch.setattr("asyncio.create_task", fake_create_task)
+
+    resp = client.post(
+        f"/jobs/{job.id}/confirm-themes",
+        data={
+            "theme_id": ["theme-1", "theme-2"],
+            "theme_title": ["Planning next steps", "Blockers"],
+            "theme_notes": ["Follow up", ""],
+            "theme_enabled": ["theme-1"],
+        },
+    )
+
+    assert resp.status_code == 200
+    updated = load_job(job.id, scratch_root=scratch)
+    assert updated.current_stage == JobStage.postprocess
+    assert updated.status == JobStatus.running
+    assert updated.stage_statuses["themes"] == "done"
+    assert updated.themes_path is not None
+    assert json.loads(Path(updated.themes_path).read_text())[0]["source"] == "manual"
+    assert "coro" in scheduled
+
+
+def test_confirm_themes_publishes_done_event(scratch, client, monkeypatch):
+    job = create_job(category_id="test", original_filename="audio.m4a", scratch_root=scratch)
+    (scratch / job.id / job.original_filename).write_bytes(b"audio")
+    job.current_stage = JobStage.themes
+    job.status = JobStatus.pending
+    job.stage_statuses["align"] = "done"
+    job.stage_statuses["themes"] = "awaiting_confirmation"
+    save_job(job, scratch_root=scratch)
+
+    published = []
+
+    def fake_publish(job_id, event):
+        published.append((job_id, event))
+
+    async def fake_run_pipeline(job_arg, source_arg, cfg_arg):
+        return None
+
+    def fake_create_task(coro):
+        coro.close()
+        return None
+
+    monkeypatch.setattr("recalld.routers.jobs.bus.publish", fake_publish)
+    monkeypatch.setattr("recalld.routers.jobs.run_pipeline", fake_run_pipeline)
+    monkeypatch.setattr("asyncio.create_task", fake_create_task)
+
+    resp = client.post(
+        f"/jobs/{job.id}/confirm-themes",
+        data={
+            "theme_id": ["theme-1"],
+            "theme_title": ["Planning next steps"],
+            "theme_notes": [""],
+            "theme_enabled": ["theme-1"],
+        },
+    )
+
+    assert resp.status_code == 200
+    assert any(event.get("stage") == "themes" and event.get("status") == "done" for _, event in published)
 
 
 def test_swap_speakers_updates_aligned_transcript(scratch, client):

@@ -123,6 +123,87 @@ async def test_llm_client_extracts_message_content_from_structured_output():
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_llm_client_traces_complete_as_generation(monkeypatch):
+    respx.post("http://localhost:1234/api/v1/chat").mock(
+        return_value=httpx.Response(200, json={"output": "ok"})
+    )
+
+    calls: list[tuple[str, dict]] = []
+
+    class FakeObservation:
+        def __enter__(self):
+            calls.append(("enter", {}))
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            calls.append(("exit", {"exc_type": exc_type}))
+            return False
+
+        def update(self, **kwargs):
+            calls.append(("update", kwargs))
+
+    class FakeClient:
+        def start_as_current_observation(self, **kwargs):
+            calls.append(("start", kwargs))
+            return FakeObservation()
+
+    monkeypatch.setattr("recalld.tracing._get_client", lambda: FakeClient())
+
+    client = LLMClient(base_url="http://localhost:1234", model="qwen/qwen3-4b")
+    result = await client.complete("system", "user")
+
+    assert result == "ok"
+    assert calls[0][0] == "start"
+    assert calls[0][1]["as_type"] == "generation"
+    assert calls[0][1]["model"] == "qwen/qwen3-4b"
+    assert calls[0][1]["input"] == {
+        "model": "qwen/qwen3-4b",
+        "system_prompt": "system",
+        "input": "user",
+        "stream": False,
+    }
+    assert calls[1] == ("enter", {})
+    assert calls[2] == ("update", {"output": "ok"})
+    assert calls[3][0] == "exit"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_llm_client_forwards_prompt_context_to_tracing(monkeypatch):
+    respx.post("http://localhost:1234/api/v1/chat").mock(
+        return_value=httpx.Response(200, json={"output": "ok"})
+    )
+
+    calls: list[tuple[str, dict]] = []
+
+    class FakeObservation:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def update(self, **kwargs):
+            calls.append(("update", kwargs))
+
+    class FakeClient:
+        def start_as_current_observation(self, **kwargs):
+            calls.append(("start", kwargs))
+            return FakeObservation()
+
+    monkeypatch.setattr("recalld.tracing._get_client", lambda: FakeClient())
+
+    prompt = object()
+    client = LLMClient(base_url="http://localhost:1234", model="qwen/qwen3-4b")
+    result = await client.complete("system", "user", prompt=prompt, metadata={"prompt_name": "demo"})
+
+    assert result == "ok"
+    assert calls[0][1]["prompt"] is prompt
+    assert calls[0][1]["metadata"]["prompt_name"] == "demo"
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_llm_client_stream_yields_partial_tokens():
     sse_content = (
         'event: chat.start\n'

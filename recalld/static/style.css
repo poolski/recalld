@@ -465,6 +465,116 @@ button:active, .btn:active { transform: scale(0.98); }
 }
 
 .stage-meta { color: var(--muted); font-size: 13px; margin-top: 12px; }
+.theme-editor {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.theme-row {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  padding: 14px;
+  background: linear-gradient(180deg, #ffffff 0%, #f7fbff 100%);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 10px 24px rgba(15, 34, 51, 0.05);
+}
+
+.theme-row.dragging {
+  opacity: 0.55;
+  box-shadow: 0 14px 30px rgba(11, 120, 209, 0.12);
+}
+
+.theme-drag-handle {
+  height: 100%;
+  min-height: 38px;
+  border: 1px solid var(--border);
+  background: #f6fafc;
+  color: var(--muted);
+  border-radius: 10px;
+  padding: 0;
+  line-height: 1;
+  font-size: 16px;
+  cursor: grab;
+}
+
+.theme-row-body {
+  display: grid;
+  gap: 10px;
+}
+
+.theme-row-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.theme-title-input {
+  width: 100%;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.theme-notes-input {
+  width: 100%;
+  resize: vertical;
+  min-height: 68px;
+  background: #f9fcff;
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.theme-enabled {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.theme-enabled input {
+  width: auto;
+  box-shadow: none;
+}
+
+.theme-row-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.theme-row-meta span {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(var(--accent-rgb), 0.06);
+  border: 1px solid rgba(var(--accent-rgb), 0.1);
+}
+
+.theme-row-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.theme-row-actions .btn-ghost {
+  padding: 6px 10px;
+  font-size: 12px;
+}
 .stage-results { margin-top: 16px; }
 .stage-results h3 { margin: 16px 0 8px; font-size: 14px; }
 .stage-results ul { padding-left: 20px; margin-top: 8px; }

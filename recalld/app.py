@@ -10,6 +10,7 @@ from fastapi.templating import Jinja2Templates
 from recalld.config import DEFAULT_CONFIG_PATH, load_config, save_config
 from recalld.jobs import DEFAULT_SCRATCH_ROOT
 from recalld.runtime import cancel_pipeline_tasks
+from recalld.tracing import shutdown_tracing
 
 STATIC_DIR = Path(__file__).parent / "static"
 TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -27,6 +28,7 @@ async def lifespan(app: FastAPI):
     save_config(cfg)
     yield
     await cancel_pipeline_tasks()
+    shutdown_tracing()
 
 
 def create_app() -> FastAPI:

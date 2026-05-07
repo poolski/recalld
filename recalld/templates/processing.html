@@ -5,6 +5,7 @@
   "transcribe": "Transcribe",
   "diarise": "Detect speakers",
   "align": "Confirm speakers",
+  "themes": "Propose themes",
   "postprocess": "Summarise",
   "vault": "Send to Obsidian"
 } %}
@@ -12,7 +13,7 @@
 
 <div class="card">
 <ul class="stage-list">
-  {% for stage in ["ingest", "transcribe", "diarise", "align", "postprocess", "vault"] %}
+  {% for stage in ["ingest", "transcribe", "diarise", "align", "themes", "postprocess", "vault"] %}
   {% set stage_status = job.stage_statuses.get(stage, "pending") %}
   {% set expanded = stage_status in ["running", "failed", "awaiting_confirmation"] or (stage == job.current_stage.value and job.error) %}
   <li class="stage-item" id="stage-{{ stage }}">
@@ -56,6 +57,21 @@
         </button>
       </div>
       <div id="align-preview" class="stage-rich-text" style="display:none"></div>
+      {% endif %}
+      {% if stage == "themes" %}
+      <form id="theme-confirm-form" style="{% if stage_status == 'awaiting_confirmation' %}display:block{% else %}display:none{% endif %}; margin-top:12px"
+        hx-post="/jobs/{{ job.id }}/confirm-themes" hx-swap="none">
+        <div class="stage-meta">Edit the suggested headings before the summary runs.</div>
+        <div id="theme-editor" class="theme-editor"></div>
+        <div style="display:flex; gap:12px; flex-wrap:wrap; margin-top:12px">
+          <button id="theme-add-btn" type="button" class="btn-ghost">Add theme</button>
+          <button id="theme-confirm-btn" class="btn" type="submit">Confirm themes and summarize</button>
+        </div>
+      </form>
+      <button id="theme-skip-btn" style="{% if stage_status == 'failed' %}display:inline-flex{% else %}display:none{% endif %}; margin-top:12px" class="btn-ghost"
+        hx-post="/jobs/{{ job.id }}/skip-themes" hx-swap="none">
+        Continue without themes
+      </button>
       {% endif %}
       {% if stage == "postprocess" %}
       <div id="postprocess-chunk-info" class="stage-meta" style="display:none"></div>

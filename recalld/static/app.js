@@ -201,7 +201,8 @@ async function connectSSE(jobId, initialStages = {}) {
     const event = JSON.parse(e.data);
     const { stage, status, message, preview, topic_count, strategy,
             obsidian_uri, summary, focus_points, can_skip, can_write_transcript_only,
-            can_confirm_vault, can_confirm_speakers, can_swap_speakers, vault_preview, filename,
+            can_confirm_vault, can_confirm_speakers, can_swap_speakers, can_confirm_themes, can_skip_themes,
+            vault_preview, filename, themes,
             vault_conflict_path, can_overwrite_vault_note, can_append_vault_note } = event;
 
     updateStage(stage, status, message);
@@ -216,6 +217,8 @@ async function connectSSE(jobId, initialStages = {}) {
     if (vault_conflict_path || can_overwrite_vault_note || can_append_vault_note) showVaultConflict(vault_conflict_path);
     if (vault_preview) showVaultPreview(vault_preview);
     if (can_confirm_speakers || can_swap_speakers) showSpeakerConfirm(stage);
+    if (can_confirm_themes) showThemeConfirm(stage, themes || []);
+    if (can_skip_themes) showThemeFallback(stage);
 
     appendStageLog(stage, `[${stage}] ${status}${message ? ': ' + message : ''}`);
   };
@@ -238,6 +241,8 @@ async function hydrateJobState(jobId) {
     if (state.vault_conflict_path || state.can_overwrite_vault_note || state.can_append_vault_note) showVaultConflict(state.vault_conflict_path);
     if (state.vault_preview) showVaultPreview(state.vault_preview);
     if (state.can_confirm_speakers || state.can_swap_speakers) showSpeakerConfirm("align");
+    if (state.can_confirm_themes) showThemeConfirm("themes", state.themes || []);
+    if (state.can_skip_themes) showThemeFallback("themes");
   } catch (_) {
     // Fall back to template-provided state if the refresh request fails.
   }
@@ -249,6 +254,8 @@ function applyStageStatuses(stageStatuses) {
   });
   if (stageStatuses.vault === "awaiting_confirmation") showVaultConfirm("vault");
   if (stageStatuses.align === "awaiting_confirmation") showSpeakerConfirm("align");
+  if (stageStatuses.themes === "awaiting_confirmation") showThemeConfirm("themes");
+  if (stageStatuses.themes === "failed") showThemeFallback("themes");
 }
 
 function updateStage(stage, status, message) {
@@ -288,6 +295,14 @@ function clearStageResults(stage) {
       vaultPreviewEl.style.display = "none";
     }
   }
+  if (stage === "themes") {
+    const form = document.getElementById("theme-confirm-form");
+    const editor = document.getElementById("theme-editor");
+    const skipBtn = document.getElementById("theme-skip-btn");
+    if (editor) editor.innerHTML = "";
+    if (form) form.style.display = "none";
+    if (skipBtn) skipBtn.style.display = "none";
+  }
   if (stage === "align") {
     const previewEl = document.getElementById("align-preview");
     if (previewEl) {
@@ -304,7 +319,7 @@ function clearStageResults(stage) {
   }
 }
 
-const STAGE_ORDER = ["ingest", "transcribe", "diarise", "align", "postprocess", "vault"];
+const STAGE_ORDER = ["ingest", "transcribe", "diarise", "align", "themes", "postprocess", "vault"];
 
 function resetPipelineFromStage(stage) {
   const startIndex = STAGE_ORDER.indexOf(stage);
@@ -384,6 +399,159 @@ function showPostprocessFallback(stage) {
   setStageExpanded("postprocess", true);
 }
 
+function showThemeConfirm(stage, themes = []) {
+  const form = document.getElementById("theme-confirm-form");
+  const editor = document.getElementById("theme-editor");
+  const skipBtn = document.getElementById("theme-skip-btn");
+  const addBtn = document.getElementById("theme-add-btn");
+  if (form) form.style.display = "block";
+  if (skipBtn) skipBtn.style.display = "none";
+  if (editor) renderThemeEditor(editor, themes);
+  if (addBtn) {
+    addBtn.onclick = () => {
+      if (!editor) return;
+      appendThemeRow(editor, {
+        id: `custom-${Date.now()}`,
+        title: "",
+        notes: "",
+        enabled: true,
+        order: editor.querySelectorAll("[data-theme-row]").length + 1,
+        source: "manual",
+      });
+    };
+  }
+  setStageExpanded("themes", true);
+}
+
+function showThemeFallback(stage) {
+  const skipBtn = document.getElementById("theme-skip-btn");
+  const form = document.getElementById("theme-confirm-form");
+  if (form) form.style.display = "none";
+  if (skipBtn) skipBtn.style.display = "inline-flex";
+  setStageExpanded("themes", true);
+}
+
+function renderThemeEditor(editor, themes = []) {
+  editor.innerHTML = "";
+  const normalized = Array.isArray(themes) ? themes : [];
+  if (normalized.length === 0) {
+    appendThemeRow(editor, {
+      id: `theme-${Date.now()}`,
+      title: "",
+      notes: "",
+      enabled: true,
+      order: 1,
+      source: "transcript",
+    });
+  } else {
+    normalized.forEach((theme, index) => {
+      appendThemeRow(editor, {
+        id: theme.id || `theme-${index + 1}`,
+        title: theme.title || "",
+        notes: theme.notes || "",
+        enabled: theme.enabled !== false,
+        order: theme.order || (index + 1),
+        source: theme.source || "transcript",
+      });
+    });
+  }
+}
+
+function appendThemeRow(editor, theme) {
+  const row = document.createElement("div");
+  row.className = "theme-row";
+  row.dataset.themeRow = "true";
+  row.dataset.themeId = theme.id;
+  const isTranscriptTheme = theme.source !== "manual";
+
+  row.innerHTML = `
+    <button type="button" class="theme-drag-handle" aria-label="Drag to reorder" draggable="true">⋮⋮</button>
+    <div class="theme-row-body">
+      <div class="theme-row-head">
+        <input type="hidden" name="theme_id" value="${escapeHtml(theme.id)}">
+        <input type="text" name="theme_title" class="theme-title-input" value="${escapeHtml(theme.title)}" placeholder="Theme heading">
+        <label class="theme-enabled">
+          <input type="checkbox" name="theme_enabled" value="${escapeHtml(theme.id)}" ${theme.enabled ? "checked" : ""}>
+          Use
+        </label>
+      </div>
+      <textarea name="theme_notes" class="theme-notes-input" rows="2" placeholder="Short note or cue">${escapeHtml(theme.notes)}</textarea>
+      <div class="theme-row-meta" ${isTranscriptTheme ? "" : 'style="display:none"'}>Suggested from transcript</div>
+    </div>
+    <div class="theme-row-actions">
+      <button type="button" class="btn-ghost theme-move-up" onclick="moveThemeRow(this, -1)">↑</button>
+      <button type="button" class="btn-ghost theme-move-down" onclick="moveThemeRow(this, 1)">↓</button>
+      <button type="button" class="btn-ghost theme-remove" onclick="removeThemeRow(this)">Remove</button>
+    </div>
+  `;
+
+  const handle = row.querySelector(".theme-drag-handle");
+  const dropTargets = [handle, row];
+
+  handle.addEventListener("dragstart", (event) => {
+    event.dataTransfer.effectAllowed = "move";
+    row.classList.add("dragging");
+    window.__draggedThemeRow = row;
+  });
+  handle.addEventListener("dragend", () => {
+    row.classList.remove("dragging");
+    window.__draggedThemeRow = null;
+  });
+  dropTargets.forEach((target) => {
+    target.addEventListener("dragover", (event) => {
+      event.preventDefault();
+    });
+    target.addEventListener("drop", (event) => {
+      event.preventDefault();
+      const dragged = window.__draggedThemeRow;
+      if (!dragged || dragged === row || !dragged.parentElement) return;
+      const rect = row.getBoundingClientRect();
+      const before = event.clientY < rect.top + rect.height / 2;
+      row.parentElement.insertBefore(dragged, before ? row : row.nextSibling);
+    });
+  });
+
+  editor.appendChild(row);
+  return row;
+}
+
+function moveThemeRow(button, direction) {
+  const row = button.closest("[data-theme-row]");
+  if (!row || !row.parentElement) return;
+  const sibling = direction < 0 ? row.previousElementSibling : row.nextElementSibling;
+  if (!sibling) return;
+  if (direction < 0) {
+    row.parentElement.insertBefore(row, sibling);
+  } else {
+    row.parentElement.insertBefore(sibling, row);
+  }
+}
+
+function removeThemeRow(button) {
+  const row = button.closest("[data-theme-row]");
+  const editor = document.getElementById("theme-editor");
+  if (!row || !editor) return;
+  row.remove();
+  if (!editor.querySelector("[data-theme-row]")) {
+    appendThemeRow(editor, {
+      id: `theme-${Date.now()}`,
+      title: "",
+      notes: "",
+      enabled: true,
+      order: 1,
+      source: "manual",
+    });
+  }
+}
+
+function escapeHtml(text) {
+  return String(text || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
 function showVaultConfirm(stage, filename) {
   const el = document.getElementById("vault-confirm-btn");
   const controls = document.getElementById("vault-confirm-controls");
@@ -433,6 +601,14 @@ function disableStageConfirmation(stage) {
   if (stage === "postprocess") {
     const el = document.getElementById("postprocess-fallback-btn");
     if (el) el.style.display = "none";
+  }
+  if (stage === "themes") {
+    const form = document.getElementById("theme-confirm-form");
+    const skipBtn = document.getElementById("theme-skip-btn");
+    const addBtn = document.getElementById("theme-add-btn");
+    if (form) form.style.display = "none";
+    if (skipBtn) skipBtn.style.display = "none";
+    if (addBtn) addBtn.onclick = null;
   }
   if (stage === "align") {
     const controls = document.getElementById("speaker-confirm-controls");

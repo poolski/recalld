@@ -11,6 +11,7 @@ from recalld.events import bus
 from recalld.jobs import DEFAULT_SCRATCH_ROOT, JobStage, JobStatus, can_restart_from_stage, delete_job, load_job, reset_job_for_rerun, save_job
 from recalld.pipeline.align import LabelledTurn
 from recalld.pipeline.postprocess import PostProcessResult
+from recalld.pipeline.themes import ThemeSuggestion
 from recalld.pipeline.vault import render_session_note_preview
 from recalld.pipeline.runner import _normalize_note_title, run_pipeline
 from recalld.runtime import spawn_pipeline_task
@@ -40,6 +41,22 @@ def _load_postprocess_state(job) -> dict:
         "strategy": data.get("strategy", ""),
         "topic_count": data.get("topic_count"),
     }
+
+
+def _load_themes_state(job) -> list[dict]:
+    if getattr(job, "theme_guidance", None):
+        if isinstance(job.theme_guidance, list):
+            return job.theme_guidance
+    if not job.themes_path:
+        return []
+    path = Path(job.themes_path)
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text())
+    except Exception:
+        return []
+    return data if isinstance(data, list) else []
 
 
 def _load_vault_preview(job, category) -> str:
@@ -104,6 +121,43 @@ def _swap_aligned_speakers(job) -> None:
     Path(job.aligned_path).write_text(json.dumps([turn.__dict__ for turn in turns]))
 
 
+def _persist_themes(job, themes: list[dict]) -> Path:
+    themes_path = Path(DEFAULT_SCRATCH_ROOT / job.id / "themes.json")
+    themes_path.parent.mkdir(parents=True, exist_ok=True)
+    themes_path.write_text(json.dumps(themes))
+    job.themes_path = str(themes_path)
+    job.theme_guidance = themes
+    job.theme_count = len(themes)
+    job.theme_strategy = "confirmed"
+    return themes_path
+
+
+def _build_confirmed_themes(
+    theme_ids: list[str],
+    theme_titles: list[str],
+    theme_notes: list[str],
+    theme_enabled: list[str],
+) -> list[dict]:
+    enabled = set(theme_enabled)
+    themes: list[dict] = []
+    for index, theme_id in enumerate(theme_ids, start=1):
+        title = theme_titles[index - 1].strip() if index - 1 < len(theme_titles) else ""
+        notes = theme_notes[index - 1].strip() if index - 1 < len(theme_notes) else ""
+        if not title and not notes:
+            continue
+        themes.append(
+            ThemeSuggestion(
+                id=theme_id or f"theme-{index}",
+                title=title or f"Theme {index}",
+                notes=notes,
+                enabled=theme_id in enabled,
+                order=index,
+                source="manual",
+            ).__dict__.copy()
+        )
+    return themes
+
+
 @router.get("/{job_id}/row", response_class=HTMLResponse)
 async def job_row(request: Request, job_id: str):
     job = load_job(job_id, scratch_root=DEFAULT_SCRATCH_ROOT)
@@ -155,6 +209,9 @@ async def job_state(job_id: str):
         "vault_conflict_path": job.vault_conflict_path,
         "can_confirm_speakers": job.stage_statuses.get("align") == "awaiting_confirmation",
         "can_swap_speakers": job.stage_statuses.get("align") == "awaiting_confirmation",
+        "can_confirm_themes": job.stage_statuses.get("themes") == "awaiting_confirmation",
+        "can_skip_themes": job.stage_statuses.get("themes") == "failed",
+        "themes": _load_themes_state(job),
         "vault_preview": _load_vault_preview(job, cat) if job.stage_statuses.get("vault") == "awaiting_confirmation" else "",
         **postprocess_state,
     })
@@ -264,12 +321,64 @@ async def confirm_speakers(request: Request, job_id: str):
 
     job = load_job(job_id, scratch_root=DEFAULT_SCRATCH_ROOT)
     cfg = load_config()
-    job.current_stage = JobStage.postprocess
+    job.current_stage = JobStage.themes
     job.status = JobStatus.running
     job.stage_statuses["align"] = "done"
     _save_job(job)
 
     bus.publish(job.id, {"stage": "align", "status": "done"})
+
+    source = _job_source_path(job.id, job.original_filename)
+    spawn_pipeline_task(run_pipeline(job, source, cfg))
+    return templates.TemplateResponse(request, "processing.html", {"job": job})
+
+
+@router.post("/{job_id}/confirm-themes", response_class=HTMLResponse)
+async def confirm_themes(
+    request: Request,
+    job_id: str,
+    theme_id: list[str] = Form([]),
+    theme_title: list[str] = Form([]),
+    theme_notes: list[str] = Form([]),
+    theme_enabled: list[str] = Form([]),
+):
+    from recalld.config import load_config
+
+    job = load_job(job_id, scratch_root=DEFAULT_SCRATCH_ROOT)
+    cfg = load_config()
+    themes = _build_confirmed_themes(theme_id, theme_title, theme_notes, theme_enabled)
+    _persist_themes(job, themes)
+    job.current_stage = JobStage.postprocess
+    job.status = JobStatus.running
+    job.stage_statuses["themes"] = "done"
+    _save_job(job)
+    bus.publish(job.id, {
+        "stage": "themes",
+        "status": "done",
+        "themes": themes,
+    })
+
+    source = _job_source_path(job.id, job.original_filename)
+    spawn_pipeline_task(run_pipeline(job, source, cfg))
+    return templates.TemplateResponse(request, "processing.html", {"job": job})
+
+
+@router.post("/{job_id}/skip-themes", response_class=HTMLResponse)
+async def skip_themes(request: Request, job_id: str):
+    from recalld.config import load_config
+
+    job = load_job(job_id, scratch_root=DEFAULT_SCRATCH_ROOT)
+    cfg = load_config()
+    _persist_themes(job, [])
+    job.current_stage = JobStage.postprocess
+    job.status = JobStatus.running
+    job.stage_statuses["themes"] = "done"
+    _save_job(job)
+    bus.publish(job.id, {
+        "stage": "themes",
+        "status": "done",
+        "themes": [],
+    })
 
     source = _job_source_path(job.id, job.original_filename)
     spawn_pipeline_task(run_pipeline(job, source, cfg))
@@ -392,7 +501,7 @@ async def skip_diarise(request: Request, job_id: str):
     job.aligned_path = str(aligned_path)
     job.stage_statuses["diarise"] = "failed"
     job.stage_statuses["align"] = "done"
-    job.current_stage = JobStage.postprocess
+    job.current_stage = JobStage.themes
     job.status = JobStatus.running
     _save_job(job)
 

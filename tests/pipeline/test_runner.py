@@ -1,5 +1,5 @@
 import json
-from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -10,7 +10,7 @@ from recalld.pipeline.transcribe import WordSegment
 from recalld.jobs import JobStage, JobStatus, create_job, load_job, save_job
 from recalld.pipeline.align import LabelledTurn
 from recalld.pipeline.postprocess import PostProcessResult
-from recalld.pipeline.runner import run_pipeline
+from recalld.pipeline.runner import _infer_note_title_with_llm, run_pipeline
 
 
 @pytest.mark.asyncio
@@ -41,7 +41,7 @@ async def test_pipeline_waits_for_vault_confirmation(tmp_path, monkeypatch):
     )
 
     with patch("recalld.pipeline.runner.ensure_loaded_context_length", AsyncMock(return_value=1000)), \
-         patch("recalld.pipeline.runner.postprocess", AsyncMock(return_value=result)) as mock_postprocess, \
+         patch("recalld.pipeline.runner.postprocess", AsyncMock(return_value=result)), \
          patch("recalld.pipeline.runner._infer_note_title_with_llm", AsyncMock(return_value="2026-04-29 Project Alpha Meeting.md")), \
          patch("recalld.pipeline.runner.bus.publish") as mock_publish, \
          patch("recalld.pipeline.runner.VaultWriter") as MockWriter:
@@ -174,6 +174,107 @@ async def test_pipeline_uses_existing_note_content_when_editing_target_note(tmp_
 
     assert mock_postprocess.call_args.kwargs["existing_note_content"] == "## Summary\n- terse outline"
     writer.read_note.assert_awaited_once_with("Notes/Sessions/2026-05-05 Planning.md")
+
+
+@pytest.mark.asyncio
+async def test_note_title_inference_uses_runtime_prompt_loader(tmp_path, monkeypatch):
+    monkeypatch.setattr("recalld.pipeline.runner.DEFAULT_SCRATCH_ROOT", tmp_path)
+
+    job = create_job(category_id="cat-1", original_filename="session.m4a", scratch_root=tmp_path)
+    labelled = [
+        LabelledTurn(speaker="You", start=0.0, end=1.0, text="We should name this meeting"),
+        LabelledTurn(speaker="Facilitator", start=1.0, end=2.0, text="What title fits best?"),
+    ]
+
+    prompt = SimpleNamespace(
+        text="title-system",
+        prompt="title-prompt",
+        metadata={"prompt_name": "recalld/note-title", "prompt_source": "langfuse"},
+    )
+    calls: list[tuple[str, dict]] = []
+
+    def fake_resolve(name, fallback, **variables):
+        return prompt
+
+    async def fake_complete(system, user, prompt=None, metadata=None):
+        calls.append({"system": system, "prompt": prompt, "metadata": metadata})
+        return "2026-05-06 Project Alpha Meeting"
+
+    with patch("recalld.pipeline.runner.resolve_text_prompt", side_effect=fake_resolve), \
+         patch("recalld.pipeline.runner.LLMClient") as MockClient:
+        instance = MockClient.return_value
+        instance.complete = AsyncMock(side_effect=fake_complete)
+        result = await _infer_note_title_with_llm(job, Config(llm_model="test-model"), "Planning", "Notes/Sessions", labelled)
+
+    assert result == f"{job.created_at.date().isoformat()} Project Alpha Meeting.md"
+    assert calls[0]["prompt"] == "title-prompt"
+    assert calls[0]["metadata"]["prompt_name"] == "recalld/note-title"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_traces_root_and_postprocess_stage(tmp_path, monkeypatch):
+    monkeypatch.setattr("recalld.pipeline.runner.DEFAULT_SCRATCH_ROOT", tmp_path)
+
+    job = create_job(category_id="cat-1", original_filename="session.m4a", scratch_root=tmp_path)
+    scratch = tmp_path / job.id
+    aligned_path = scratch / "aligned.json"
+    aligned_path.write_text(json.dumps([
+        LabelledTurn(speaker="You", start=0.0, end=1.0, text="Hello").__dict__,
+    ]))
+    job.aligned_path = str(aligned_path)
+    job.current_stage = JobStage.postprocess
+    save_job(job, scratch_root=tmp_path)
+
+    cfg = Config(
+        llm_model="test-model",
+        categories=[Category(id="cat-1", name="Planning", vault_path="Notes/Sessions")],
+    )
+    result = PostProcessResult(
+        summary="Summary",
+        focus_points=["Follow up"],
+        raw_response="",
+        strategy="single",
+        topic_count=1,
+    )
+
+    calls: list[tuple[str, dict]] = []
+
+    class FakeObservation:
+        def __init__(self, name: str, kwargs: dict):
+            self.name = name
+            self.kwargs = kwargs
+
+        def __enter__(self):
+            calls.append(("enter", {"name": self.name, **self.kwargs}))
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            calls.append(("exit", {"name": self.name, "exc_type": exc_type}))
+            return False
+
+        def update(self, **kwargs):
+            calls.append(("update", {"name": self.name, **kwargs}))
+
+    class FakeClient:
+        def start_as_current_observation(self, **kwargs):
+            calls.append(("start", kwargs))
+            return FakeObservation(kwargs["name"], kwargs)
+
+    monkeypatch.setattr("recalld.tracing._get_client", lambda: FakeClient())
+    monkeypatch.setattr("recalld.pipeline.runner.ensure_loaded_context_length", AsyncMock(return_value=1000))
+    monkeypatch.setattr("recalld.pipeline.runner.postprocess", AsyncMock(return_value=result))
+    monkeypatch.setattr("recalld.pipeline.runner._infer_note_title_with_llm", AsyncMock(return_value="2026-04-29 Project Alpha Meeting.md"))
+    with patch("recalld.pipeline.runner.VaultWriter") as MockWriter:
+        writer = MockWriter.return_value
+        writer.read_note = AsyncMock(return_value="")
+        writer.write_note = AsyncMock()
+        writer.append_to_note = AsyncMock()
+        writer.note_exists = AsyncMock(return_value=False)
+        await run_pipeline(job, scratch / "session.m4a", cfg)
+
+    stage_names = [entry[1]["name"] for entry in calls if entry[0] == "start"]
+    assert stage_names[0] == "conversation-processing"
+    assert "generate-session-summary" in stage_names
 
 
 @pytest.mark.asyncio
