@@ -1,0 +1,38 @@
+{
+  "identifier": "@local:transcript-summariser",
+  "name": "Transcript Summariser",
+  "changed": false,
+  "operation": {
+    "fields": [
+      {
+        "key": "llm.prediction.contextOverflowPolicy",
+        "value": "rollingWindow"
+      },
+      {
+        "key": "llm.prediction.temperature",
+        "value": 0.15
+      },
+      {
+        "key": "llm.prediction.repeatPenalty",
+        "value": {
+          "checked": true,
+          "value": 1.1
+        }
+      },
+      {
+        "key": "llm.prediction.topKSampling",
+        "value": 40
+      },
+      {
+        "key": "llm.prediction.topPSampling",
+        "value": {
+          "checked": true,
+          "value": 0.9
+        }
+      }
+    ]
+  },
+  "load": {
+    "fields": []
+  }
+}

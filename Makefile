@@ -1,7 +1,7 @@
 .PHONY: setup install run test lint clean
 
-setup:
-	uv venv
+setup: install
+	uv run python scripts/setup
 
 install:
 	uv sync --all-groups
