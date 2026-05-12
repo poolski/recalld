@@ -44,7 +44,7 @@ cd recalld
 make setup
 ```
 
-`make setup` installs Python dependencies, copies the LM Studio preset that recalld needs, and loads the default AI prompts into Langfuse if you have it running. If LM Studio or Langfuse is not running, those steps are skipped — you can re-run `make setup` at any time.
+`make setup` installs Python dependencies, copies a `transcript-summariser` preset into LM Studio with recommended generation settings, and loads the default AI prompts into Langfuse if you have it running. If LM Studio or Langfuse is not running, those steps are skipped — you can re-run `make setup` at any time.
 
 ---
 
@@ -56,7 +56,7 @@ make setup
 2. Go to the **Discover** tab and search for a model. A good starting point is **Gemma 3** (4B or 12B depending on your machine).
 3. Download the model.
 4. Go to **Developer** → **Local Server** and start the server. The default address is `http://localhost:1234`.
-5. Run `make setup` (with LM Studio open) to install the `transcript-summariser` preset that recalld uses for every AI request. If you have already run setup, check **Presets** in LM Studio to confirm the preset is there.
+5. Run `make setup` (with LM Studio open) to install the `transcript-summariser` preset with recommended generation settings. If you have already run setup, check **Presets** in LM Studio to confirm the preset is there.
 
 ### Obsidian Local REST API
 

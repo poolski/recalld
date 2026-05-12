@@ -18,7 +18,7 @@
 | LM Studio server running | Open LM Studio → Developer tab. Confirm the server is started (green indicator). |
 | Model available | recalld loads the model automatically, but LM Studio must be open and the server running. The model must be downloaded under **My Models**. |
 | Model ID correct | The model ID in recalld's Settings must exactly match what LM Studio shows. Copy it directly to avoid typos. |
-| `transcript-summariser` preset exists | Go to **Presets** in LM Studio and confirm the preset is there. Re-run `make setup` with LM Studio open if it is missing. |
+| `transcript-summariser` preset installed | The preset sets recommended generation defaults. Go to **Presets** in LM Studio to confirm it is there. Re-run `make setup` with LM Studio open if it is missing. |
 
 ---
 
