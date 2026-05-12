@@ -1,0 +1,9 @@
+export LANGFUSE_SECRET_KEY="sk-lf-..."
+export LANGFUSE_PUBLIC_KEY="pk-lf-..."
+export LANGFUSE_BASE_URL="http://localhost:3000"
+
+# Optional: separates traces by environment in Langfuse (defaults to "default")
+# export LANGFUSE_TRACING_ENVIRONMENT="development"
+
+# Only needed if using Claude Code's Langfuse MCP integration
+# export LANGFUSE_MCP_AUTH="Basic ..."
