@@ -8,20 +8,12 @@ You need [Langfuse set up](langfuse.md) before running experiments.
 
 ## Concepts
 
-**Job**
-Every recording you upload creates a job — a folder on your machine containing the transcript, speaker data, themes, and generated note for that recording. Jobs are stored in `~/.local/share/recalld/jobs/`.
-
-**Prompt label**
-Prompts can have labels that mark their status. The two labels used in experiments are:
-
-- `production` — the version currently used by recalld for real recordings
-- `candidate` — a version you are testing
-
-**Dataset**
-When you run an experiment, recalld creates a dataset in Langfuse for that job. The dataset stores the inputs for each experiment step so you can run the same job through multiple prompts and compare results side by side.
-
-**Score**
-After each experiment run, recalld scores the output automatically. The score tells you how closely the candidate output matches the production output and how well it meets quality criteria.
+| Term | What it means |
+|---|---|
+| **Job** | Every recording creates a job — a folder at `~/.local/share/recalld/jobs/` containing the transcript, speaker data, themes, and generated note. |
+| **Prompt label** | A tag on a prompt version. `production` is what recalld uses for real recordings; `candidate` is a version you are testing. |
+| **Dataset** | A Langfuse dataset created for a job when you run an experiment. It stores the inputs so you can run multiple prompt versions against the same recording and compare results. |
+| **Score** | Automatically computed after each run. Measures how closely the candidate output matches the production output and how well it meets quality criteria. |
 
 ---
 
