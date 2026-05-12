@@ -87,6 +87,7 @@ def test_completed_stage_statuses_are_persisted(tmp_path):
     assert loaded.stage_statuses["ingest"] == "done"
     assert loaded.stage_statuses["transcribe"] == "done"
     assert loaded.stage_statuses["diarise"] == "running"
+    assert loaded.stage_statuses["themes"] == "pending"
 
 
 def test_load_job_infers_stage_statuses_for_legacy_jobs(tmp_path):
@@ -235,12 +236,46 @@ def test_reset_job_for_rerun_restart_from_transcribe_clears_transcript_cache(tmp
     assert not postprocess_file.exists()
 
 
+def test_reset_job_for_rerun_restart_from_themes_clears_theme_outputs(tmp_path):
+    job = create_job(category_id="adhd", original_filename="session.m4a", scratch_root=tmp_path)
+    themes_file = tmp_path / "themes.json"
+    themes_file.write_text("[]")
+    postprocess_file = tmp_path / "postprocess.json"
+    postprocess_file.write_text("{}")
+    job.current_stage = JobStage.vault
+    job.status = JobStatus.failed
+    job.themes_path = str(themes_file)
+    job.postprocess_path = str(postprocess_file)
+    job.topic_count = 4
+    job.chunk_strategy = "single"
+    job.stage_statuses["ingest"] = "done"
+    job.stage_statuses["transcribe"] = "done"
+    job.stage_statuses["diarise"] = "done"
+    job.stage_statuses["align"] = "done"
+    job.stage_statuses["themes"] = "done"
+    job.stage_statuses["postprocess"] = "done"
+    job.stage_statuses["vault"] = "failed"
+
+    reset_job_for_rerun(job, from_start=False, restart_stage=JobStage.themes)
+
+    assert job.current_stage == JobStage.themes
+    assert job.themes_path is None
+    assert job.postprocess_path is None
+    assert not themes_file.exists()
+    assert not postprocess_file.exists()
+    assert job.stage_statuses["themes"] == "pending"
+    assert job.stage_statuses["postprocess"] == "pending"
+    assert job.stage_statuses["vault"] == "pending"
+
+
 def test_can_restart_from_stage_checks_prerequisites(tmp_path):
     job = create_job(category_id="adhd", original_filename="session.m4a", scratch_root=tmp_path)
     job.wav_path = "audio.wav"
     job.transcript_path = "transcript.json"
+    job.aligned_path = "aligned.json"
 
     assert can_restart_from_stage(job, JobStage.ingest) is True
     assert can_restart_from_stage(job, JobStage.transcribe) is True
     assert can_restart_from_stage(job, JobStage.diarise) is True
     assert can_restart_from_stage(job, JobStage.align) is False
+    assert can_restart_from_stage(job, JobStage.themes) is True

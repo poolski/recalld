@@ -1,5 +1,7 @@
-import pytest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
+
+import pytest
 from recalld.pipeline.align import LabelledTurn
 from recalld.pipeline.postprocess import _sample_style_window, postprocess, PostProcessResult
 
@@ -51,6 +53,79 @@ async def test_postprocess_returns_summary_and_focus():
 
 
 @pytest.mark.asyncio
+async def test_postprocess_resolves_runtime_prompts_and_forwards_prompt_context():
+    long_sample = " ".join(
+        [
+            "I need to rethink the morning routine and protect deep work time.",
+            "I need to rethink the morning routine and protect deep work time.",
+            "I need to rethink the morning routine and protect deep work time.",
+            "I need to rethink the morning routine and protect deep work time.",
+            "I need to rethink the morning routine and protect deep work time.",
+            "I need to rethink the morning routine and protect deep work time.",
+        ]
+    )
+    turns = _turns([
+        ("You", long_sample),
+        ("Facilitator", "Let's explore that in detail and break down the current routine."),
+    ])
+    resolved = {
+        "recalld/postprocess-style-analysis": SimpleNamespace(
+            text="style-analysis-system",
+            prompt="style-prompt",
+            metadata={"prompt_name": "recalld/postprocess-style-analysis", "prompt_source": "langfuse"},
+        ),
+        "recalld/postprocess-summary-single": SimpleNamespace(
+            text="summary-single-system",
+            prompt="summary-single-prompt",
+            metadata={"prompt_name": "recalld/postprocess-summary-single", "prompt_source": "langfuse"},
+        ),
+        "recalld/postprocess-summary-reduce": SimpleNamespace(
+            text="summary-reduce-system",
+            prompt="summary-reduce-prompt",
+            metadata={"prompt_name": "recalld/postprocess-summary-reduce", "prompt_source": "langfuse"},
+        ),
+        "recalld/postprocess-summary-map": SimpleNamespace(
+            text="summary-map-system",
+            prompt="summary-map-prompt",
+            metadata={"prompt_name": "recalld/postprocess-summary-map", "prompt_source": "langfuse"},
+        ),
+    }
+    complete_calls = []
+    stream_calls = []
+
+    def fake_resolve(name, fallback, **variables):
+        return resolved[name]
+
+    async def fake_complete(system, user, prompt=None, metadata=None, preset=None):
+        complete_calls.append((system, prompt, metadata, preset))
+        return "- direct\n- concise"
+
+    async def fake_stream(system, user, event_cb=None, prompt=None, metadata=None, preset=None):
+        stream_calls.append((system, prompt, metadata, preset))
+        yield "## Summary\n\nA productive session exploring focus strategies.\n\n## Focus\n\n- [ ] Start mornings with planning\n"
+
+    with patch("recalld.pipeline.postprocess.resolve_text_prompt", side_effect=fake_resolve), \
+         patch("recalld.pipeline.postprocess.LLMClient") as MockClient:
+        instance = MockClient.return_value
+        instance.complete = fake_complete
+        instance.stream = fake_stream
+        result = await postprocess(
+            turns=turns,
+            llm_base_url="http://localhost:1234/v1",
+            llm_model="qwen",
+            token_budget=10000,
+        )
+
+    assert result.strategy == "single"
+    assert complete_calls[0][1] == "style-prompt"
+    assert complete_calls[0][2]["prompt_name"] == "recalld/postprocess-style-analysis"
+    assert complete_calls[0][3] == "@local:transcript-summariser"
+    assert stream_calls[0][1] == "summary-single-prompt"
+    assert stream_calls[0][2]["prompt_name"] == "recalld/postprocess-summary-single"
+    assert stream_calls[0][3] == "@local:transcript-summariser"
+
+
+@pytest.mark.asyncio
 async def test_postprocess_map_reduce_calls_llm_multiple_times():
     # Create enough turns to trigger map_reduce (budget=50)
     turns = _turns([("You", "word " * 30), ("Facilitator", "word " * 30)] * 5)
@@ -71,14 +146,22 @@ async def test_postprocess_map_reduce_calls_llm_multiple_times():
         instance = MockClient.return_value
         instance.complete = fake_complete
         instance.stream = fake_stream
-        progress = []
-        await postprocess(
-            turns=turns,
-            llm_base_url="http://localhost:1234/v1",
-            llm_model="qwen",
-            token_budget=50,
-            progress_cb=lambda msg: progress.append(msg),
-        )
+        with patch(
+            "recalld.pipeline.postprocess.chunk_transcript",
+            return_value=SimpleNamespace(
+                strategy="map_reduce",
+                chunks=[turns[: len(turns) // 2], turns[len(turns) // 2 :]],
+                topic_count=2,
+            ),
+        ):
+            progress = []
+            await postprocess(
+                turns=turns,
+                llm_base_url="http://localhost:1234/v1",
+                llm_model="qwen",
+                token_budget=50,
+                progress_cb=lambda msg: progress.append(msg),
+            )
     # Map (several calls to complete) + Reduce (one call to stream)
     assert call_count > 1
     assert any("Detecting style from transcript sample." in p for p in progress)
@@ -102,14 +185,18 @@ async def test_postprocess_uses_single_request_when_transcript_fits_provider_bud
         instance = MockClient.return_value
         instance.complete = AsyncMock(return_value="- direct\n- concise")
         instance.stream = fake_stream
-        progress = []
-        result = await postprocess(
-            turns=turns,
-            llm_base_url="http://localhost:1234/v1",
-            llm_model="qwen",
-            token_budget=2000,
-            progress_cb=lambda msg: progress.append(msg),
-        )
+        with patch(
+            "recalld.pipeline.postprocess.chunk_transcript",
+            return_value=SimpleNamespace(strategy="single", chunks=[turns], topic_count=1),
+        ):
+            progress = []
+            result = await postprocess(
+                turns=turns,
+                llm_base_url="http://localhost:1234/v1",
+                llm_model="qwen",
+                token_budget=2000,
+                progress_cb=lambda msg: progress.append(msg),
+            )
 
     assert call_count == 1
     assert result.strategy == "single"
@@ -171,6 +258,99 @@ async def test_postprocess_includes_existing_note_scaffold_in_system_prompt():
     assert "Existing note content to expand" in captured["system"]
     assert "Expand shorthand sections" in captured["system"]
     assert "## Projects" in captured["system"]
+
+
+@pytest.mark.asyncio
+async def test_postprocess_includes_confirmed_theme_guidance_in_system_prompt():
+    turns = _turns([("You", "I want to keep this note terse"), ("Facilitator", "What belongs in the summary?")])
+    captured = {}
+
+    async def fake_stream(system, user, event_cb=None):
+        captured["system"] = system
+        async for t in _fake_stream(system, user):
+            yield t
+
+    with patch("recalld.pipeline.postprocess.LLMClient") as MockClient:
+        instance = MockClient.return_value
+        instance.complete = AsyncMock(return_value="- direct\n- concise")
+        instance.stream = fake_stream
+        await postprocess(
+            turns=turns,
+            llm_base_url="http://localhost:1234/v1",
+            llm_model="qwen",
+            token_budget=10000,
+            theme_guidance=[
+                {"title": "Planning next steps", "notes": "Decisions and follow-ups", "enabled": True, "order": 1},
+                {"title": "Risks", "notes": "", "enabled": False, "order": 2},
+            ],
+        )
+
+    system = captured["system"]
+    assert "Confirmed theme guidance" in system
+    assert "Planning next steps" in system
+    assert "Decisions and follow-ups" in system
+    assert "Risks" not in system
+    assert "disabled" not in system.lower()
+
+
+@pytest.mark.asyncio
+async def test_postprocess_places_theme_guidance_before_existing_note_scaffold():
+    turns = _turns([("You", "I want to keep this note terse"), ("Facilitator", "What belongs in the summary?")])
+    captured = {}
+
+    async def fake_stream(system, user, event_cb=None):
+        captured["system"] = system
+        async for t in _fake_stream(system, user):
+            yield t
+
+    with patch("recalld.pipeline.postprocess.LLMClient") as MockClient:
+        instance = MockClient.return_value
+        instance.complete = AsyncMock(return_value="- direct\n- concise")
+        instance.stream = fake_stream
+        await postprocess(
+            turns=turns,
+            llm_base_url="http://localhost:1234/v1",
+            llm_model="qwen",
+            token_budget=10000,
+            existing_note_content="## Summary\n- terse reminder\n\n## Projects\n- follow up",
+            theme_guidance=[
+                {"title": "Planning next steps", "notes": "Decisions and follow-ups", "enabled": True, "order": 1},
+            ],
+        )
+
+    system = captured["system"]
+    assert system.index("Confirmed theme guidance") < system.index("Existing note content to expand")
+    assert "confirmed theme guidance is the primary organizational guidance" in system.lower()
+
+
+@pytest.mark.asyncio
+async def test_postprocess_says_existing_links_and_embeds_are_untouchable_with_theme_guidance():
+    turns = _turns([("You", "I want to keep this note terse"), ("Facilitator", "What belongs in the summary?")])
+    captured = {}
+
+    async def fake_stream(system, user, event_cb=None):
+        captured["system"] = system
+        async for t in _fake_stream(system, user):
+            yield t
+
+    with patch("recalld.pipeline.postprocess.LLMClient") as MockClient:
+        instance = MockClient.return_value
+        instance.complete = AsyncMock(return_value="- direct\n- concise")
+        instance.stream = fake_stream
+        await postprocess(
+            turns=turns,
+            llm_base_url="http://localhost:1234/v1",
+            llm_model="qwen",
+            token_budget=10000,
+            existing_note_content="## Summary\n- terse reminder with [[Project Board]] and ![[Daily Note]]",
+            theme_guidance=[
+                {"title": "Planning next steps", "notes": "Decisions and follow-ups", "enabled": True, "order": 1},
+            ],
+        )
+
+    system = captured["system"].lower()
+    assert "existing links, embeds, and link targets are authoritative" in system
+    assert "do not remove or rewrite them" in system
 
 
 @pytest.mark.asyncio
@@ -415,13 +595,17 @@ async def test_postprocess_calls_stream_cb_with_partial_summary():
         instance = MockClient.return_value
         instance.complete = AsyncMock(return_value="- direct\n- concise")
         instance.stream = fake_stream
-        await postprocess(
-            turns=turns,
-            llm_base_url="http://localhost:1234/v1",
-            llm_model="qwen",
-            token_budget=1000,
-            stream_cb=lambda text: updates.append(text)
-        )
+        with patch(
+            "recalld.pipeline.postprocess.chunk_transcript",
+            return_value=SimpleNamespace(strategy="single", chunks=[turns], topic_count=1),
+        ):
+            await postprocess(
+                turns=turns,
+                llm_base_url="http://localhost:1234/v1",
+                llm_model="qwen",
+                token_budget=1000,
+                stream_cb=lambda text: updates.append(text)
+            )
 
     assert "Part 1" in updates[0]
     assert "Part 1 Part 2" in updates[1]
@@ -447,13 +631,17 @@ async def test_postprocess_forwards_lmstudio_stream_events():
         instance = MockClient.return_value
         instance.complete = AsyncMock(return_value="- direct\n- concise")
         instance.stream = fake_stream
-        await postprocess(
-            turns=turns,
-            llm_base_url="http://localhost:1234/v1",
-            llm_model="qwen",
-            token_budget=1000,
-            event_cb=lambda event_type, data: captured.append(event_type),
-        )
+        with patch(
+            "recalld.pipeline.postprocess.chunk_transcript",
+            return_value=SimpleNamespace(strategy="single", chunks=[turns], topic_count=1),
+        ):
+            await postprocess(
+                turns=turns,
+                llm_base_url="http://localhost:1234/v1",
+                llm_model="qwen",
+                token_budget=1000,
+                event_cb=lambda event_type, data: captured.append(event_type),
+            )
 
     assert captured == [
         "prompt_processing.start",

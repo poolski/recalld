@@ -18,6 +18,7 @@ class JobStage(str, Enum):
     transcribe = "transcribe"
     diarise = "diarise"
     align = "align"
+    themes = "themes"
     postprocess = "postprocess"
     vault = "vault"
 
@@ -64,6 +65,8 @@ def can_restart_from_stage(job: "Job", stage: JobStage) -> bool:
         return job.wav_path is not None
     if stage == JobStage.align:
         return job.transcript_path is not None and job.diarisation_path is not None
+    if stage == JobStage.themes:
+        return job.aligned_path is not None
     if stage == JobStage.postprocess:
         return job.aligned_path is not None
     if stage == JobStage.vault:
@@ -85,11 +88,15 @@ class Job(BaseModel):
     transcript_path: Optional[str] = None
     diarisation_path: Optional[str] = None
     aligned_path: Optional[str] = None
+    themes_path: Optional[str] = None
     postprocess_path: Optional[str] = None
     # Speaker assignment (filled after align stage)
     speaker_00: Optional[str] = None
     speaker_01: Optional[str] = None
     # LLM chunking info for UI display
+    theme_guidance: list[dict] = Field(default_factory=list)
+    theme_count: Optional[int] = None
+    theme_strategy: Optional[str] = None
     topic_count: Optional[int] = None
     chunk_strategy: Optional[str] = None
     filename: Optional[str] = None
@@ -131,6 +138,12 @@ def _clear_outputs_from_stage(job: "Job", stage: JobStage) -> None:
     if STAGE_ORDER[stage.value] <= STAGE_ORDER[JobStage.align.value]:
         _remove_artifact(job.aligned_path)
         job.aligned_path = None
+    if STAGE_ORDER[stage.value] <= STAGE_ORDER[JobStage.themes.value]:
+        _remove_artifact(job.themes_path)
+        job.themes_path = None
+        job.theme_guidance = []
+        job.theme_count = None
+        job.theme_strategy = None
     if STAGE_ORDER[stage.value] <= STAGE_ORDER[JobStage.postprocess.value]:
         _remove_artifact(job.postprocess_path)
         job.postprocess_path = None
@@ -194,6 +207,10 @@ def reset_job_for_rerun(job: Job, from_start: bool, restart_stage: JobStage | No
     if STAGE_ORDER[restart_stage.value] <= STAGE_ORDER[JobStage.align.value]:
         job.speaker_00 = None
         job.speaker_01 = None
+    if STAGE_ORDER[restart_stage.value] <= STAGE_ORDER[JobStage.themes.value]:
+        job.theme_guidance = []
+        job.theme_count = None
+        job.theme_strategy = None
 
 
 def delete_job(job_id: str, scratch_root: Path = DEFAULT_SCRATCH_ROOT) -> None:

@@ -1,0 +1,130 @@
+#!/usr/bin/env -S uv run python
+"""
+First-time setup for recalld.
+
+Bootstraps Langfuse prompts from bootstrap/prompts.json,
+injects the LM Studio preset, and syncs the local prompt cache.
+
+Skips any step gracefully if the relevant service is not running.
+"""
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def _ensure_repo_on_path() -> None:
+    root = str(_repo_root())
+    if root not in sys.path:
+        sys.path.insert(0, root)
+
+
+# ---------------------------------------------------------------------------
+# Langfuse prompts
+# ---------------------------------------------------------------------------
+
+def _setup_langfuse_prompts() -> None:
+    print("Setting up Langfuse prompts...")
+
+    bootstrap_path = _repo_root() / "bootstrap" / "prompts.json"
+    data: dict = json.loads(bootstrap_path.read_text())
+
+    try:
+        from langfuse import get_client
+        client = get_client()
+    except Exception as exc:
+        print(f"  skipped — Langfuse unavailable: {exc}")
+        return
+
+    created = skipped = errors = 0
+    for name, entry in data.items():
+        try:
+            existing = client.get_prompt(name, label="production", type="text")
+            if existing is not None:
+                skipped += 1
+                continue
+        except Exception:
+            pass  # Prompt does not exist yet — create it below
+
+        try:
+            client.create_prompt(
+                name=name,
+                type="text",
+                prompt=entry["text"],
+                labels=["production"],
+                commit_message="Bootstrap from recalld defaults",
+            )
+            print(f"  created {name}")
+            created += 1
+        except Exception as exc:
+            print(f"  error creating {name}: {exc}", file=sys.stderr)
+            errors += 1
+
+    if skipped:
+        print(f"  {skipped} prompt(s) already have a production label — skipped")
+    print(f"  done: {created} created, {errors} errors")
+
+
+# ---------------------------------------------------------------------------
+# LM Studio preset
+# ---------------------------------------------------------------------------
+
+def _setup_lmstudio_preset() -> None:
+    print("Injecting LM Studio preset...")
+
+    src = _repo_root() / "bootstrap" / "Transcript Summariser.preset.json"
+    presets_dir = Path.home() / ".lmstudio" / "config-presets"
+    dest = presets_dir / src.name
+
+    if dest.exists():
+        print(f"  preset already exists at {dest} — skipped")
+        return
+
+    try:
+        presets_dir.mkdir(parents=True, exist_ok=True)
+        dest.write_text(src.read_text())
+        print(f"  copied to {dest}")
+    except Exception as exc:
+        print(f"  error: {exc}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
+# Local prompt cache
+# ---------------------------------------------------------------------------
+
+def _sync_prompt_cache() -> None:
+    print("Syncing prompt cache...")
+    _ensure_repo_on_path()
+
+    try:
+        from langfuse import get_client
+        client = get_client()
+        from recalld.llm.prompt_cache import sync_prompt_cache
+        count = sync_prompt_cache(client)
+        print(f"  synced {count} prompt(s) to ~/.config/recalld/prompts.json")
+    except Exception as exc:
+        print(f"  skipped — {exc}")
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def main() -> int:
+    _setup_langfuse_prompts()
+    print()
+    _setup_lmstudio_preset()
+    print()
+    _sync_prompt_cache()
+    print()
+    print("Setup complete.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -15,6 +15,7 @@ class ProviderModel:
     id: str
     max_context_length: int | None
     loaded_context_length: int | None = None
+    loaded_instance_id: str | None = None
     selected: bool = False
 
     @property
@@ -61,6 +62,16 @@ def _context_from_loaded_instances(entry: dict) -> int | None:
     return None
 
 
+def _loaded_instance_id(entry: dict) -> str | None:
+    for instance in entry.get("loaded_instances", []):
+        if not isinstance(instance, dict):
+            continue
+        instance_id = instance.get("id")
+        if isinstance(instance_id, str) and instance_id:
+            return instance_id
+    return None
+
+
 def _max_context_length(entry: dict) -> int | None:
     return _as_int(entry.get("max_context_length")) or _as_int(entry.get("context_length"))
 
@@ -70,6 +81,10 @@ def _selected_model(models: list[ProviderModel], selected_model: str) -> Provide
         if model.id == selected_model:
             return model
     return None
+
+
+def _loaded_models(models: list[ProviderModel]) -> list[ProviderModel]:
+    return [model for model in models if model.loaded_context_length is not None]
 
 
 def _normalize_model_entries(data: dict) -> list[ProviderModel]:
@@ -102,6 +117,7 @@ def _normalize_model_entries(data: dict) -> list[ProviderModel]:
                     id=str(model_id),
                     max_context_length=max_length,
                     loaded_context_length=loaded_length,
+                    loaded_instance_id=_loaded_instance_id(entry),
                 )
             )
         return models
@@ -125,12 +141,13 @@ async def list_available_models(base_url: str, selected_model: str) -> list[Prov
         return []
 
     return [
-        ProviderModel(
-            id=model.id,
-            max_context_length=model.max_context_length,
-            loaded_context_length=model.loaded_context_length,
-            selected=model.id == selected_model,
-        )
+            ProviderModel(
+                id=model.id,
+                max_context_length=model.max_context_length,
+                loaded_context_length=model.loaded_context_length,
+                loaded_instance_id=model.loaded_instance_id,
+                selected=model.id == selected_model,
+            )
         for model in _normalize_model_entries(data)
     ]
 
@@ -158,20 +175,52 @@ def _context_length_from_load_response(data: dict) -> int | None:
     return _as_int(data.get("context_length"))
 
 
-async def ensure_loaded_context_length(base_url: str, model: str) -> int:
+async def ensure_loaded_context_length(
+    base_url: str,
+    model: str,
+    requested_context_length: int | None = None,
+) -> int:
     """Ensure the selected LM Studio model is loaded, then return its runtime context length."""
     models = await list_available_models(base_url, selected_model=model)
     selected = _selected_model(models, model)
     if selected is None:
         return await detect_context_length(base_url, model)
 
-    if selected.loaded_context_length:
+    loaded_models = _loaded_models(models)
+
+    if selected.loaded_context_length and requested_context_length is None and len(loaded_models) == 1:
         return selected.loaded_context_length
 
-    max_length = selected.max_context_length or selected.context_length or FALLBACK_CONTEXT_LENGTH
+    if selected.loaded_context_length and requested_context_length is not None:
+        if selected.loaded_context_length == requested_context_length and len(loaded_models) == 1:
+            return selected.loaded_context_length
+
+    max_length = requested_context_length or selected.max_context_length or selected.context_length or FALLBACK_CONTEXT_LENGTH
     client = LLMClient(base_url=base_url, model=model)
+    for loaded in loaded_models:
+        if loaded.id == model:
+            # Only unload the target model if being reloaded with a different context length
+            if requested_context_length is not None and loaded.loaded_context_length != requested_context_length:
+                await client.unload_model(instance_id=loaded.loaded_instance_id or loaded.id)
+        else:
+            await client.unload_model(instance_id=loaded.loaded_instance_id or loaded.id)
     load_response = await client.load_model(context_length=max_length)
     loaded_length = _context_length_from_load_response(load_response)
+    if requested_context_length is not None:
+        if loaded_length is not None:
+            if loaded_length != requested_context_length:
+                raise RuntimeError(
+                    f"LM Studio loaded {model} with context length {loaded_length}, expected {requested_context_length}"
+                )
+            return loaded_length
+
+        refreshed = await list_available_models(base_url, selected_model=model)
+        refreshed_selected = _selected_model(refreshed, model)
+        if refreshed_selected and refreshed_selected.context_length == requested_context_length:
+            return refreshed_selected.context_length
+
+        raise RuntimeError(f"LM Studio did not report context length {requested_context_length} after loading {model}")
+
     refreshed = await list_available_models(base_url, selected_model=model)
     refreshed_selected = _selected_model(refreshed, model)
     if refreshed_selected and refreshed_selected.context_length:

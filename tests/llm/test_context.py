@@ -1,6 +1,7 @@
 import pytest
 import httpx
 import respx
+import json
 from recalld.llm.context import ProviderModel, detect_context_length, ensure_loaded_context_length, estimate_tokens, list_available_models, token_budget
 
 FAKE_MODELS_RESPONSE = {
@@ -111,7 +112,13 @@ async def test_list_available_models_supports_lmstudio_models_payload():
     models = await list_available_models("http://localhost:1234/api/v1", selected_model="gemma-3-270m-it-qat")
 
     assert models == [
-        ProviderModel(id="gemma-3-270m-it-qat", max_context_length=32768, loaded_context_length=4096, selected=True),
+        ProviderModel(
+            id="gemma-3-270m-it-qat",
+            max_context_length=32768,
+            loaded_context_length=4096,
+            loaded_instance_id="gemma-3-270m-it-qat",
+            selected=True,
+        ),
         ProviderModel(id="qwen/qwen3-4b", max_context_length=65536, selected=False),
     ]
 
@@ -140,6 +147,7 @@ async def test_detect_context_length_uses_max_context_length_when_lmstudio_model
 
 @respx.mock
 async def test_ensure_loaded_context_length_loads_unloaded_model_with_max_context_length():
+    # FAKE_LMSTUDIO_MODELS_RESPONSE has gemma loaded; qwen is the target — gemma must be unloaded first
     list_route = respx.get("http://localhost:1234/api/v1/models").mock(
         side_effect=[
             httpx.Response(200, json=FAKE_LMSTUDIO_MODELS_RESPONSE),
@@ -161,6 +169,9 @@ async def test_ensure_loaded_context_length_loads_unloaded_model_with_max_contex
             }),
         ],
     )
+    unload_route = respx.post("http://localhost:1234/api/v1/models/unload").mock(
+        return_value=httpx.Response(200, json={"status": "unloaded"})
+    )
     load_route = respx.post("http://localhost:1234/api/v1/models/load").mock(
         return_value=httpx.Response(200, json=FAKE_LMSTUDIO_LOAD_RESPONSE)
     )
@@ -168,8 +179,9 @@ async def test_ensure_loaded_context_length_loads_unloaded_model_with_max_contex
     length = await ensure_loaded_context_length("http://localhost:1234/api/v1", "qwen/qwen3-4b")
 
     assert list_route.call_count == 2
+    assert unload_route.called
+    assert json.loads(unload_route.calls[0].request.content) == {"instance_id": "gemma-3-270m-it-qat"}
     assert load_route.called
-    assert load_route.calls[0].request.content
     assert length == 65536
 
 
@@ -182,6 +194,129 @@ async def test_ensure_loaded_context_length_uses_existing_loaded_instance():
     length = await ensure_loaded_context_length("http://localhost:1234/api/v1", "gemma-3-270m-it-qat")
 
     assert length == 4096
+
+
+@respx.mock
+async def test_ensure_loaded_context_length_unloads_wrong_model_then_loads_configured():
+    # qwen is loaded; gemma is the configured model — should unload qwen, then load gemma
+    wrong_model_loaded = {
+        "models": [
+            {
+                "type": "llm",
+                "key": "gemma-3-270m-it-qat",
+                "loaded_instances": [],
+                "max_context_length": 32768,
+            },
+            {
+                "type": "llm",
+                "key": "qwen/qwen3-4b",
+                "loaded_instances": [
+                    {"id": "qwen/qwen3-4b", "config": {"context_length": 32768}}
+                ],
+                "max_context_length": 65536,
+            },
+        ]
+    }
+    after_load = {
+        "models": [
+            {
+                "type": "llm",
+                "key": "gemma-3-270m-it-qat",
+                "loaded_instances": [
+                    {"id": "gemma-3-270m-it-qat", "config": {"context_length": 32768}}
+                ],
+                "max_context_length": 32768,
+            },
+        ]
+    }
+    respx.get("http://localhost:1234/api/v1/models").mock(
+        side_effect=[
+            httpx.Response(200, json=wrong_model_loaded),
+            httpx.Response(200, json=after_load),
+        ]
+    )
+    unload_route = respx.post("http://localhost:1234/api/v1/models/unload").mock(
+        return_value=httpx.Response(200, json={"status": "unloaded"})
+    )
+    load_route = respx.post("http://localhost:1234/api/v1/models/load").mock(
+        return_value=httpx.Response(200, json={
+            "type": "llm",
+            "instance_id": "gemma-3-270m-it-qat",
+            "status": "loaded",
+            "load_config": {"context_length": 32768},
+        })
+    )
+
+    length = await ensure_loaded_context_length("http://localhost:1234/api/v1", "gemma-3-270m-it-qat")
+
+    assert unload_route.called
+    assert json.loads(unload_route.calls[0].request.content) == {"instance_id": "qwen/qwen3-4b"}
+    assert load_route.called
+    assert length == 32768
+
+
+@respx.mock
+async def test_ensure_loaded_context_length_unloads_then_reloads_when_requested_context_differs():
+    list_route = respx.get("http://localhost:1234/api/v1/models").mock(
+        side_effect=[
+            httpx.Response(200, json={
+                "models": [
+                    {
+                        "type": "llm",
+                        "key": "qwen/qwen3-4b",
+                        "display_name": "Qwen 3 4B",
+                        "loaded_instances": [
+                            {
+                                "id": "qwen/qwen3-4b",
+                                "config": {"context_length": 131072},
+                            }
+                        ],
+                        "max_context_length": 131072,
+                    },
+                ]
+            }),
+            httpx.Response(200, json={
+                "models": [
+                    {
+                        "type": "llm",
+                        "key": "qwen/qwen3-4b",
+                        "display_name": "Qwen 3 4B",
+                        "loaded_instances": [
+                            {
+                                "id": "qwen/qwen3-4b",
+                                "config": {"context_length": 32768},
+                            }
+                        ],
+                        "max_context_length": 65536,
+                    },
+                ]
+            }),
+        ],
+    )
+    unload_route = respx.post("http://localhost:1234/api/v1/models/unload").mock(
+        return_value=httpx.Response(200, json={"status": "unloaded"})
+    )
+    load_route = respx.post("http://localhost:1234/api/v1/models/load").mock(
+        return_value=httpx.Response(200, json={
+            "type": "llm",
+            "instance_id": "qwen/qwen3-4b",
+            "status": "loaded",
+            "load_config": {"context_length": 32768},
+        })
+    )
+
+    length = await ensure_loaded_context_length(
+        "http://localhost:1234/api/v1",
+        "qwen/qwen3-4b",
+        requested_context_length=32768,
+    )
+
+    assert list_route.call_count == 1
+    assert unload_route.called
+    assert unload_route.calls[0].request.content
+    assert json.loads(unload_route.calls[0].request.content.decode()) == {"instance_id": "qwen/qwen3-4b"}
+    assert load_route.called
+    assert length == 32768
 
 
 def test_token_budget():

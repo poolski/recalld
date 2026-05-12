@@ -9,7 +9,9 @@ from fastapi.templating import Jinja2Templates
 
 from recalld.config import DEFAULT_CONFIG_PATH, load_config, save_config
 from recalld.jobs import DEFAULT_SCRATCH_ROOT
+from recalld.llm.prompt_cache import sync_prompt_cache
 from recalld.runtime import cancel_pipeline_tasks
+from recalld.tracing import get_langfuse_client, shutdown_tracing
 
 STATIC_DIR = Path(__file__).parent / "static"
 TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -25,8 +27,16 @@ async def lifespan(app: FastAPI):
     # Ensure config file exists
     cfg = load_config()
     save_config(cfg)
+    # Sync production prompts from Langfuse into the local cache
+    client = get_langfuse_client()
+    if client is not None:
+        try:
+            sync_prompt_cache(client)
+        except Exception:
+            pass
     yield
     await cancel_pipeline_tasks()
+    shutdown_tracing()
 
 
 def create_app() -> FastAPI:

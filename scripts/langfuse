@@ -1,0 +1,606 @@
+#!/usr/bin/env -S uv run python
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from datetime import datetime
+from enum import Enum
+from pathlib import Path
+from typing import Any
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _ensure_repo_on_path() -> None:
+    repo_root = _repo_root()
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+
+
+def _to_jsonable(value: Any) -> Any:
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, dict):
+        return {str(key): _to_jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_to_jsonable(item) for item in value]
+
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        try:
+            return _to_jsonable(model_dump())
+        except Exception:
+            pass
+
+    if hasattr(value, "__dict__"):
+        return _to_jsonable(vars(value))
+
+    return repr(value)
+
+
+def _print_json(value: Any) -> None:
+    print(json.dumps(_to_jsonable(value), indent=2, sort_keys=True, ensure_ascii=False))
+
+
+def _load_text(path: str | None, value: str | None) -> str:
+    if path and value:
+        raise SystemExit("Use either --prompt or --prompt-file, not both.")
+    if path:
+        return Path(path).read_text()
+    if value is not None:
+        return value
+    raise SystemExit("Provide --prompt or --prompt-file.")
+
+
+def _get_client():
+    _ensure_repo_on_path()
+    from langfuse import get_client
+
+    try:
+        return get_client()
+    except Exception as exc:
+        raise SystemExit(f"Langfuse credentials are unavailable: {exc}") from exc
+
+
+def _evaluator_request(client: Any, method: str, path: str, body: Any = None) -> Any:
+    hc = client.api._client_wrapper.httpx_client
+    resp = hc.request(path=path, method=method, json=body)
+    if resp.status_code >= 400:
+        raise SystemExit(f"HTTP {resp.status_code}: {resp.text}")
+    return resp.json()
+
+
+def _cmd_prompt_get(args: argparse.Namespace) -> int:
+    client = _get_client()
+    kwargs: dict[str, Any] = {}
+    if args.label:
+        kwargs["label"] = args.label
+    if args.version is not None:
+        kwargs["version"] = args.version
+    if args.type:
+        kwargs["type"] = args.type
+    prompt = client.get_prompt(args.name, **kwargs)
+    _print_json(prompt)
+    return 0
+
+
+def _cmd_prompt_list(args: argparse.Namespace) -> int:
+    client = _get_client()
+    response = client.api.prompts.list(
+        name=args.name,
+        label=args.label,
+        tag=args.tag,
+        page=args.page,
+        limit=args.limit,
+    )
+    _print_json(response)
+    return 0
+
+
+def _cmd_prompt_create(args: argparse.Namespace) -> int:
+    client = _get_client()
+    prompt = _load_text(args.prompt_file, args.prompt)
+    created = client.create_prompt(
+        name=args.name,
+        type=args.type,
+        prompt=prompt,
+        labels=args.label or [],
+        commit_message=args.commit_message,
+    )
+    _print_json(created)
+    return 0
+
+
+def _cmd_prompt_update_labels(args: argparse.Namespace) -> int:
+    client = _get_client()
+    updated = client.update_prompt(
+        name=args.name,
+        version=args.version,
+        new_labels=args.new_label,
+    )
+    _print_json(updated)
+    return 0
+
+
+def _cmd_prompt_sync(args: argparse.Namespace) -> int:
+    _ensure_repo_on_path()
+    from recalld.llm.prompt_cache import sync_prompt_cache
+
+    count = sync_prompt_cache(_get_client())
+    print(f"Synced {count} prompts to cache.")
+    return 0
+
+
+def _cmd_prompt_clone_label(args: argparse.Namespace) -> int:
+    _ensure_repo_on_path()
+    from recalld.experiments.langfuse_summary import clone_prompt_label
+
+    clone_prompt_label(
+        source_label=args.source_label,
+        target_label=args.target_label,
+        prompt_names=tuple(args.name),
+        client=_get_client(),
+    )
+    return 0
+
+
+def _experiment_kwargs(args: argparse.Namespace) -> dict[str, Any]:
+    context_length = getattr(args, "context_length", None)
+    if context_length is None and getattr(args, "llm_model", None):
+        context_length = 32768
+    return dict(
+        job_id=args.job_id,
+        prompt_labels=getattr(args, "prompt_label", None),
+        llm_models=getattr(args, "llm_model", None),
+        context_length=context_length,
+        scratch_root=Path(getattr(args, "scratch_root", str(Path.home() / ".local" / "share" / "recalld" / "jobs"))),
+        dataset_name=getattr(args, "dataset_name", None),
+        clone_from_label=getattr(args, "clone_from_label", None),
+        run_tag=getattr(args, "run_tag", None),
+        experiment_name=getattr(args, "experiment_name", None),
+    )
+
+
+def _cmd_summary_experiment(args: argparse.Namespace) -> int:
+    _ensure_repo_on_path()
+    from recalld.experiments.langfuse_summary import run_summary_prompt_experiment
+
+    results = run_summary_prompt_experiment(**_experiment_kwargs(args))
+    for result in results:
+        print(f"{result['prompt_label']}: {result['run_name']}")
+        print(result["result"].format())
+    return 0
+
+
+def _cmd_focus_experiment(args: argparse.Namespace) -> int:
+    _ensure_repo_on_path()
+    from recalld.experiments.langfuse_focus import run_focus_prompt_experiment
+
+    results = run_focus_prompt_experiment(**_experiment_kwargs(args))
+    for result in results:
+        print(f"{result['prompt_label']}: {result['run_name']}")
+        print(result["result"].format())
+    return 0
+
+
+def _cmd_themes_experiment(args: argparse.Namespace) -> int:
+    _ensure_repo_on_path()
+    from recalld.experiments.langfuse_themes import run_themes_prompt_experiment
+
+    results = run_themes_prompt_experiment(**_experiment_kwargs(args))
+    for result in results:
+        print(f"{result['prompt_label']}: {result['run_name']}")
+        print(result["result"].format())
+    return 0
+
+
+def _cmd_style_experiment(args: argparse.Namespace) -> int:
+    _ensure_repo_on_path()
+    from recalld.experiments.langfuse_style import run_style_prompt_experiment
+
+    kwargs = _experiment_kwargs(args)
+    kwargs.pop("clone_from_label", None)
+    results = run_style_prompt_experiment(**kwargs)
+    for result in results:
+        print(f"{result['prompt_label']}: {result['run_name']}")
+        print(result["result"].format())
+    return 0
+
+
+def _cmd_evaluator_list(args: argparse.Namespace) -> int:
+    client = _get_client()
+    params = ""
+    if args.page is not None or args.limit is not None:
+        parts = []
+        if args.page is not None:
+            parts.append(f"page={args.page}")
+        if args.limit is not None:
+            parts.append(f"limit={args.limit}")
+        params = "?" + "&".join(parts)
+    result = _evaluator_request(client, "GET", f"/api/public/unstable/evaluators{params}")
+    _print_json(result)
+    return 0
+
+
+def _cmd_evaluator_get(args: argparse.Namespace) -> int:
+    client = _get_client()
+    result = _evaluator_request(client, "GET", f"/api/public/unstable/evaluators/{args.evaluator_id}")
+    _print_json(result)
+    return 0
+
+
+def _cmd_evaluator_create(args: argparse.Namespace) -> int:
+    client = _get_client()
+    prompt = _load_text(args.prompt_file, args.prompt)
+
+    output_def: dict[str, Any] = {"dataType": args.data_type}
+    if args.reasoning_description:
+        output_def["reasoning"] = {"description": args.reasoning_description}
+    score_def: dict[str, Any] = {}
+    if args.score_description:
+        score_def["description"] = args.score_description
+    if args.category:
+        score_def["categories"] = args.category
+        score_def["shouldAllowMultipleMatches"] = args.allow_multiple_matches
+    if score_def:
+        output_def["score"] = score_def
+
+    body: dict[str, Any] = {
+        "name": args.name,
+        "prompt": prompt,
+        "outputDefinition": output_def,
+    }
+    if args.provider and args.model:
+        body["modelConfig"] = {"provider": args.provider, "model": args.model}
+
+    result = _evaluator_request(client, "POST", "/api/public/unstable/evaluators", body)
+    _print_json(result)
+    return 0
+
+
+def _cmd_eval_rule_list(args: argparse.Namespace) -> int:
+    client = _get_client()
+    result = _evaluator_request(client, "GET", "/api/public/unstable/evaluation-rules")
+    _print_json(result)
+    return 0
+
+
+def _cmd_eval_rule_create(args: argparse.Namespace) -> int:
+    client = _get_client()
+    mapping = [{"variable": v, "source": s} for v, s in (args.mapping or [])]
+    body: dict[str, Any] = {
+        "target": args.target,
+        "name": args.name,
+        "evaluator": {"id": args.evaluator_id, "name": args.evaluator_name, "scope": "project"},
+        "enabled": not args.disabled,
+        "mapping": mapping,
+        "sampling": args.sampling,
+    }
+    if args.filter_dataset:
+        body["filter"] = [{"column": "datasetId", "type": "stringOptions", "operator": "any of", "value": args.filter_dataset}]
+    result = _evaluator_request(client, "POST", "/api/public/unstable/evaluation-rules", body)
+    _print_json(result)
+    return 0
+
+
+def _cmd_eval_rule_update_filter(args: argparse.Namespace) -> int:
+    client = _get_client()
+    body: dict[str, Any] = {"target": args.target}
+    if args.filter_dataset:
+        body["filter"] = [{"column": "datasetId", "type": "stringOptions", "operator": "any of", "value": args.filter_dataset}]
+    else:
+        body["filter"] = []
+    result = _evaluator_request(client, "PATCH", f"/api/public/unstable/evaluation-rules/{args.rule_id}", body)
+    _print_json(result)
+    return 0
+
+
+def _cmd_eval_rule_update_mapping(args: argparse.Namespace) -> int:
+    client = _get_client()
+    mapping = [{"variable": v, "source": s} for v, s in args.mapping]
+    result = _evaluator_request(
+        client, "PATCH", f"/api/public/unstable/evaluation-rules/{args.rule_id}",
+        {"target": args.target, "mapping": mapping},
+    )
+    _print_json(result)
+    return 0
+
+
+def _cmd_score_config_list(args: argparse.Namespace) -> int:
+    client = _get_client()
+    result = _evaluator_request(client, "GET", "/api/public/score-configs")
+    _print_json(result)
+    return 0
+
+
+def _cmd_score_config_create(args: argparse.Namespace) -> int:
+    client = _get_client()
+    body: dict[str, Any] = {
+        "name": args.name,
+        "dataType": args.data_type,
+    }
+    if args.description:
+        body["description"] = args.description
+    if args.min_value is not None:
+        body["minValue"] = args.min_value
+    if args.max_value is not None:
+        body["maxValue"] = args.max_value
+    if args.category:
+        body["categories"] = [{"label": label, "value": value} for label, value in args.category]
+    result = _evaluator_request(client, "POST", "/api/public/score-configs", body)
+    _print_json(result)
+    return 0
+
+
+def _cmd_dataset_get(args: argparse.Namespace) -> int:
+    client = _get_client()
+    version = datetime.fromisoformat(args.version) if args.version else None
+    dataset = client.get_dataset(args.name, version=version)
+    _print_json(dataset)
+    return 0
+
+
+def _cmd_dataset_runs(args: argparse.Namespace) -> int:
+    client = _get_client()
+    if args.run_name:
+        run = client.get_dataset_run(dataset_name=args.name, run_name=args.run_name)
+        _print_json(run)
+        return 0
+
+    runs = client.get_dataset_runs(dataset_name=args.name)
+    _print_json(runs)
+    return 0
+
+
+def _cmd_trace_get(args: argparse.Namespace) -> int:
+    client = _get_client()
+    trace = client.api.trace.get(args.trace_id, fields=args.fields)
+    _print_json(trace)
+    return 0
+
+
+def _cmd_experiment(args: argparse.Namespace) -> int:
+    import os
+
+    os.environ.setdefault("LANGFUSE_ENABLE_REMOTE_PROMPTS", "1")
+    _ensure_repo_on_path()
+
+    kwargs = _experiment_kwargs(args)
+
+    if args.experiment_type == "summary":
+        from recalld.experiments.langfuse_summary import run_summary_prompt_experiment
+        results = run_summary_prompt_experiment(**kwargs)
+    elif args.experiment_type == "focus":
+        from recalld.experiments.langfuse_focus import run_focus_prompt_experiment
+        results = run_focus_prompt_experiment(**kwargs)
+    elif args.experiment_type == "themes":
+        from recalld.experiments.langfuse_themes import run_themes_prompt_experiment
+        results = run_themes_prompt_experiment(**kwargs)
+    else:
+        style_kwargs = {k: v for k, v in kwargs.items() if k != "clone_from_label"}
+        from recalld.experiments.langfuse_style import run_style_prompt_experiment
+        results = run_style_prompt_experiment(**style_kwargs)
+
+    for result in results:
+        print(f"{result['prompt_label']}: {result['run_name']}")
+        print(result["result"].format())
+    return 0
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Langfuse API helper for recalld.")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    prompt_parser = subparsers.add_parser("prompt", help="Prompt management operations")
+    prompt_sub = prompt_parser.add_subparsers(dest="prompt_command", required=True)
+
+    prompt_get = prompt_sub.add_parser("get", help="Fetch a prompt by name")
+    prompt_get.add_argument("name")
+    prompt_get.add_argument("--label")
+    prompt_get.add_argument("--version", type=int)
+    prompt_get.add_argument("--type", choices=["text", "chat"])
+    prompt_get.set_defaults(func=_cmd_prompt_get)
+
+    prompt_list = prompt_sub.add_parser("list", help="List prompts")
+    prompt_list.add_argument("--name")
+    prompt_list.add_argument("--label")
+    prompt_list.add_argument("--tag")
+    prompt_list.add_argument("--page", type=int)
+    prompt_list.add_argument("--limit", type=int)
+    prompt_list.set_defaults(func=_cmd_prompt_list)
+
+    prompt_create = prompt_sub.add_parser("create", help="Create a new prompt version")
+    prompt_create.add_argument("name")
+    prompt_create.add_argument("--type", choices=["text", "chat"], default="text")
+    prompt_create.add_argument("--prompt")
+    prompt_create.add_argument("--prompt-file")
+    prompt_create.add_argument("--label", action="append", dest="label")
+    prompt_create.add_argument("--commit-message")
+    prompt_create.set_defaults(func=_cmd_prompt_create)
+
+    prompt_update = prompt_sub.add_parser("update-labels", help="Update labels on an existing prompt version")
+    prompt_update.add_argument("name")
+    prompt_update.add_argument("--version", type=int, required=True)
+    prompt_update.add_argument("--new-label", action="append", required=True)
+    prompt_update.set_defaults(func=_cmd_prompt_update_labels)
+
+    prompt_clone = prompt_sub.add_parser("clone-label", help="Clone one prompt label to another")
+    prompt_clone.add_argument("source_label")
+    prompt_clone.add_argument("target_label")
+    prompt_clone.add_argument(
+        "--name",
+        action="append",
+        required=True,
+        help="Prompt name to clone; repeat for multiple prompt names",
+    )
+    prompt_clone.set_defaults(func=_cmd_prompt_clone_label)
+
+    prompt_sync = prompt_sub.add_parser(
+        "sync",
+        help="Fetch all production prompts from Langfuse and save them to the local cache",
+    )
+    prompt_sync.set_defaults(func=_cmd_prompt_sync)
+
+    evaluator_parser = subparsers.add_parser("evaluator", help="Evaluator management (unstable API)")
+    evaluator_sub = evaluator_parser.add_subparsers(dest="evaluator_command", required=True)
+
+    evaluator_list = evaluator_sub.add_parser("list", help="List evaluators (latest version of each)")
+    evaluator_list.add_argument("--page", type=int)
+    evaluator_list.add_argument("--limit", type=int)
+    evaluator_list.set_defaults(func=_cmd_evaluator_list)
+
+    evaluator_get = evaluator_sub.add_parser("get", help="Get an evaluator by ID")
+    evaluator_get.add_argument("evaluator_id")
+    evaluator_get.set_defaults(func=_cmd_evaluator_get)
+
+    evaluator_create = evaluator_sub.add_parser("create", help="Create a new evaluator (or next version if name exists)")
+    evaluator_create.add_argument("name")
+    evaluator_create.add_argument("--prompt")
+    evaluator_create.add_argument("--prompt-file")
+    evaluator_create.add_argument(
+        "--data-type", choices=["NUMERIC", "BOOLEAN", "CATEGORICAL"], required=True
+    )
+    evaluator_create.add_argument("--reasoning-description")
+    evaluator_create.add_argument("--score-description")
+    evaluator_create.add_argument("--category", action="append", dest="category", help="Allowed category value (CATEGORICAL only); repeat for multiple")
+    evaluator_create.add_argument("--allow-multiple-matches", action="store_true", default=False, help="Allow multiple category matches (CATEGORICAL only)")
+    evaluator_create.add_argument("--provider", help="LLM provider (e.g. openai, anthropic); omit to use project default")
+    evaluator_create.add_argument("--model", help="LLM model name; omit to use project default")
+    evaluator_create.set_defaults(func=_cmd_evaluator_create)
+
+    eval_rule_parser = subparsers.add_parser("eval-rule", help="Evaluation rule management (unstable API)")
+    eval_rule_sub = eval_rule_parser.add_subparsers(dest="eval_rule_command", required=True)
+
+    eval_rule_list = eval_rule_sub.add_parser("list", help="List evaluation rules")
+    eval_rule_list.set_defaults(func=_cmd_eval_rule_list)
+
+    eval_rule_create = eval_rule_sub.add_parser("create", help="Create an evaluation rule")
+    eval_rule_create.add_argument("name", help="Rule name (usually matches the evaluator name)")
+    eval_rule_create.add_argument("--evaluator-id", required=True, help="Evaluator ID")
+    eval_rule_create.add_argument("--evaluator-name", required=True, help="Evaluator name")
+    eval_rule_create.add_argument(
+        "--target", choices=["observation", "experiment"], default="experiment",
+        help="Evaluation target type (default: experiment)",
+    )
+    eval_rule_create.add_argument(
+        "--map", nargs=2, metavar=("VARIABLE", "SOURCE"),
+        action="append", dest="mapping",
+        help="Map a variable to a source (e.g. --map output output); repeat for each variable",
+    )
+    eval_rule_create.add_argument("--sampling", type=float, default=1.0)
+    eval_rule_create.add_argument("--disabled", action="store_true", default=False)
+    eval_rule_create.add_argument(
+        "--filter-dataset", action="append", dest="filter_dataset", metavar="DATASET_ID",
+        help="Restrict rule to this dataset ID; repeat to allow multiple datasets",
+    )
+    eval_rule_create.set_defaults(func=_cmd_eval_rule_create)
+
+    eval_rule_update_filter = eval_rule_sub.add_parser("update-filter", help="Update dataset filter on an evaluation rule")
+    eval_rule_update_filter.add_argument("rule_id", help="Evaluation rule ID")
+    eval_rule_update_filter.add_argument(
+        "--target", choices=["observation", "experiment"], default="experiment",
+    )
+    eval_rule_update_filter.add_argument(
+        "--filter-dataset", action="append", dest="filter_dataset", metavar="DATASET_ID",
+        help="Restrict rule to this dataset ID; repeat to allow multiple. Omit to clear filter.",
+    )
+    eval_rule_update_filter.set_defaults(func=_cmd_eval_rule_update_filter)
+
+    eval_rule_update = eval_rule_sub.add_parser("update-mapping", help="Update variable mapping on an evaluation rule")
+    eval_rule_update.add_argument("rule_id", help="Evaluation rule ID")
+    eval_rule_update.add_argument(
+        "--target", choices=["observation", "experiment"], required=True,
+        help="Evaluation target type",
+    )
+    eval_rule_update.add_argument(
+        "--map", nargs=2, metavar=("VARIABLE", "SOURCE"),
+        action="append", dest="mapping", required=True,
+        help="Map a variable to a source (e.g. --map output output); repeat for each variable",
+    )
+    eval_rule_update.set_defaults(func=_cmd_eval_rule_update_mapping)
+
+    score_config_parser = subparsers.add_parser("score-config", help="Score config management")
+    score_config_sub = score_config_parser.add_subparsers(dest="score_config_command", required=True)
+
+    score_config_list = score_config_sub.add_parser("list", help="List score configs")
+    score_config_list.set_defaults(func=_cmd_score_config_list)
+
+    score_config_create = score_config_sub.add_parser("create", help="Create a score config")
+    score_config_create.add_argument("name")
+    score_config_create.add_argument("--data-type", choices=["NUMERIC", "BOOLEAN", "CATEGORICAL"], required=True)
+    score_config_create.add_argument("--description")
+    score_config_create.add_argument("--min-value", type=float, dest="min_value")
+    score_config_create.add_argument("--max-value", type=float, dest="max_value")
+    score_config_create.add_argument(
+        "--category", nargs=2, metavar=("LABEL", "VALUE"), action="append",
+        help="Category entry as label value pair (CATEGORICAL only); repeat for each category",
+    )
+    score_config_create.set_defaults(func=_cmd_score_config_create)
+
+    dataset_parser = subparsers.add_parser("dataset", help="Dataset and experiment operations")
+    dataset_sub = dataset_parser.add_subparsers(dest="dataset_command", required=True)
+
+    dataset_get = dataset_sub.add_parser("get", help="Fetch a dataset by name")
+    dataset_get.add_argument("name")
+    dataset_get.add_argument("--version")
+    dataset_get.set_defaults(func=_cmd_dataset_get)
+
+    dataset_runs = dataset_sub.add_parser("runs", help="List runs for a dataset")
+    dataset_runs.add_argument("name")
+    dataset_runs.add_argument("--run-name")
+    dataset_runs.set_defaults(func=_cmd_dataset_runs)
+
+    trace_parser = subparsers.add_parser("trace", help="Trace inspection")
+    trace_sub = trace_parser.add_subparsers(dest="trace_command", required=True)
+
+    trace_get = trace_sub.add_parser("get", help="Fetch a trace by id")
+    trace_get.add_argument("trace_id")
+    trace_get.add_argument("--fields")
+    trace_get.set_defaults(func=_cmd_trace_get)
+
+    experiment_parser = subparsers.add_parser("experiment", help="Run a prompt experiment")
+    experiment_sub = experiment_parser.add_subparsers(dest="experiment_type", required=True)
+
+    for exp_type, exp_help in [
+        ("summary", "Run a summary prompt experiment"),
+        ("focus", "Run a focus prompt experiment"),
+        ("themes", "Run a themes prompt experiment"),
+        ("style", "Run a style sub-prompt experiment"),
+    ]:
+        exp = experiment_sub.add_parser(exp_type, help=exp_help)
+        exp.add_argument("--job-id", required=True)
+        exp.add_argument("--prompt-label", action="append", dest="prompt_label")
+        exp.add_argument("--llm-model", action="append", dest="llm_model")
+        exp.add_argument("--context-length", type=int)
+        exp.add_argument("--clone-from-label")
+        exp.add_argument("--dataset-name")
+        exp.add_argument("--run-tag", dest="run_tag", help="Tag added to run name and metadata (e.g. model name)")
+        exp.add_argument("--experiment-name", dest="experiment_name", help="Human-readable name shown as column header in Langfuse")
+        exp.add_argument("--scratch-root", default=str(Path.home() / ".local" / "share" / "recalld" / "jobs"))
+        exp.set_defaults(func=_cmd_experiment)
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+
+    if getattr(args, "func", None) is None:
+        parser.print_help()
+        return 1
+
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
