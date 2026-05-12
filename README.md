@@ -76,11 +76,13 @@ Start recalld, then open **Settings** in the browser to fill in:
 
 ### Categories
 
-A **category** is a profile for a recurring type of meeting — for example, "1:1 with Alice" or "Team standup". Each category records:
+A **category** is a profile for a recurring type of meeting — for example, "1:1 with Alice" or "Team standup".
 
-- which folder in your Obsidian vault to save notes to
-- what to call each speaker in the note
-- optionally, a focus note to append action items to
+| Field | What it does |
+|---|---|
+| Vault path | Folder inside your Obsidian vault where notes are saved |
+| Speaker names | What to call each person in the note |
+| Focus note | Optional note to append action items to |
 
 You need at least one category before you can process a recording. Create one in the **Categories** section of the app.
 
@@ -104,12 +106,12 @@ You need at least one category before you can process a recording. Create one in
 
 ## Other commands
 
-```bash
-make test     # run the test suite
-make lint     # check code style
-make fmt      # auto-fix formatting
-make setup    # re-run first-time setup (safe to run again)
-```
+| Command | What it does |
+|---|---|
+| `make test` | Run the test suite |
+| `make lint` | Check code style |
+| `make fmt` | Auto-fix formatting |
+| `make setup` | Re-run first-time setup (safe to run again) |
 
 ---
 
