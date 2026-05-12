@@ -13,7 +13,7 @@ Everything runs on your own machine. No data leaves your computer.
 | [Python 3.11+](https://www.python.org/downloads/) | Check with `python3 --version` |
 | [uv](https://docs.astral.sh/uv/) | Installs dependencies and runs recalld |
 | [ffmpeg](https://ffmpeg.org/) | Converts audio before transcription |
-| [LM Studio](https://lmstudio.ai/) | Runs the local AI model. Download a 4–8 B parameter model. `make setup` installs the preset recalld needs — run it with LM Studio open. |
+| [LM Studio](https://lmstudio.ai/) | Runs the local AI model. Download a 4–8 B parameter model. `make setup` installs a `transcript-summariser` preset with recommended generation settings — run it with LM Studio open. |
 | [Obsidian](https://obsidian.md/) + [Local REST API plugin](https://github.com/coddingtonbear/obsidian-local-rest-api) | Where notes are saved. Install the plugin from the Obsidian community plugins browser and enable it. |
 | [Hugging Face](https://huggingface.co/) account and token | Required for speaker identification. Accept the [`pyannote/speaker-diarization-3.1`](https://huggingface.co/pyannote/speaker-diarization-3.1) terms, then generate a token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens). Without a token, recalld transcribes but cannot tell speakers apart. |
 
@@ -56,7 +56,7 @@ cd recalld
 make setup
 ```
 
-This installs Python dependencies, loads the default AI prompts into Langfuse (if you have it running), and copies the LM Studio preset that recalld needs. If Langfuse or LM Studio is not running, those steps are skipped gracefully — you can re-run `make setup` later.
+This installs Python dependencies, loads the default AI prompts into Langfuse (if you have it running), and copies a `transcript-summariser` preset into LM Studio with recommended generation settings. If Langfuse or LM Studio is not running, those steps are skipped gracefully — you can re-run `make setup` later.
 
 ---
 
