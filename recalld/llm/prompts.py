@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import os
 from typing import Any
 
+from recalld.llm.prompt_cache import get_cached_prompt
 from recalld.tracing import get_langfuse_client
 
 
@@ -24,6 +26,10 @@ def _prompt_value(prompt: Any, variables: dict[str, Any]) -> str:
     if isinstance(prompt, str):
         return prompt
     return str(prompt)
+
+
+def _prompt_hash(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()[:12]
 
 
 def _prompt_metadata(prompt: Any | None, source: str, prompt_name: str) -> dict[str, Any]:
@@ -88,18 +94,37 @@ def resolve_text_prompt(
                     break
                 if prompt is None:
                     continue
+                text = _prompt_value(prompt, variables)
+                meta = _prompt_metadata(prompt, "langfuse", prompt_name)
+                meta["prompt_hash"] = _prompt_hash(text)
                 return ResolvedPrompt(
                     name=prompt_name,
-                    text=_prompt_value(prompt, variables),
+                    text=text,
                     prompt=prompt,
                     source="langfuse",
-                    metadata=_prompt_metadata(prompt, "langfuse", prompt_name),
+                    metadata=meta,
                 )
 
+    cached_text = get_cached_prompt(prompt_name)
+    if cached_text is not None:
+        text = _render_fallback(cached_text, variables)
+        meta = _prompt_metadata(None, "cache", prompt_name)
+        meta["prompt_hash"] = _prompt_hash(text)
+        return ResolvedPrompt(
+            name=prompt_name,
+            text=text,
+            prompt=None,
+            source="cache",
+            metadata=meta,
+        )
+
+    text = _render_fallback(fallback, variables)
+    meta = _prompt_metadata(None, "fallback", prompt_name)
+    meta["prompt_hash"] = _prompt_hash(text)
     return ResolvedPrompt(
         name=prompt_name,
-        text=_render_fallback(fallback, variables),
+        text=text,
         prompt=None,
         source="fallback",
-        metadata=_prompt_metadata(None, "fallback", prompt_name),
+        metadata=meta,
     )

@@ -131,6 +131,15 @@ def _cmd_prompt_update_labels(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_prompt_sync(args: argparse.Namespace) -> int:
+    _ensure_repo_on_path()
+    from recalld.llm.prompt_cache import sync_prompt_cache
+
+    count = sync_prompt_cache(_get_client())
+    print(f"Synced {count} prompts to cache.")
+    return 0
+
+
 def _cmd_prompt_clone_label(args: argparse.Namespace) -> int:
     _ensure_repo_on_path()
     from recalld.experiments.langfuse_summary import clone_prompt_label
@@ -434,6 +443,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Prompt name to clone; repeat for multiple prompt names",
     )
     prompt_clone.set_defaults(func=_cmd_prompt_clone_label)
+
+    prompt_sync = prompt_sub.add_parser(
+        "sync",
+        help="Fetch all production prompts from Langfuse and save them to the local cache",
+    )
+    prompt_sync.set_defaults(func=_cmd_prompt_sync)
 
     evaluator_parser = subparsers.add_parser("evaluator", help="Evaluator management (unstable API)")
     evaluator_sub = evaluator_parser.add_subparsers(dest="evaluator_command", required=True)
