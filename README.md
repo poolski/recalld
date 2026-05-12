@@ -8,27 +8,14 @@ Everything runs on your own machine. No data leaves your computer.
 
 ## Requirements
 
-You need all of the following before recalld will work end-to-end.
-
-**Python 3.11 or newer**
-The language recalld is written in.
-
-**[uv](https://docs.astral.sh/uv/)**
-The tool that installs Python packages and runs recalld.
-
-**[ffmpeg](https://ffmpeg.org/)**
-Converts audio files before transcription.
-
-**[LM Studio](https://lmstudio.ai/)**
-Runs the AI that writes the note. Install it, then download a model — a 4–8 B parameter model works well. `make setup` installs the LM Studio preset that recalld uses; you need to open LM Studio before running setup.
-
-**[Obsidian](https://obsidian.md/) with the [Local REST API plugin](https://github.com/coddingtonbear/obsidian-local-rest-api)**
-Where the finished notes are saved. Install the plugin from the Obsidian community plugins browser and enable it. It exposes a local API that recalld uses to write notes.
-
-**[Hugging Face](https://huggingface.co/) account and token**
-Required for speaker identification (diarisation). Create a free account, accept the terms for [`pyannote/speaker-diarization-3.1`](https://huggingface.co/pyannote/speaker-diarization-3.1), then generate a token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens).
-
-> If you skip the Hugging Face token, recalld will still transcribe audio — it just cannot tell which speaker said what.
+| Requirement | Notes |
+|---|---|
+| [Python 3.11+](https://www.python.org/downloads/) | Check with `python3 --version` |
+| [uv](https://docs.astral.sh/uv/) | Installs dependencies and runs recalld |
+| [ffmpeg](https://ffmpeg.org/) | Converts audio before transcription |
+| [LM Studio](https://lmstudio.ai/) | Runs the local AI model. Download a 4–8 B parameter model. `make setup` installs the preset recalld needs — run it with LM Studio open. |
+| [Obsidian](https://obsidian.md/) + [Local REST API plugin](https://github.com/coddingtonbear/obsidian-local-rest-api) | Where notes are saved. Install the plugin from the Obsidian community plugins browser and enable it. |
+| [Hugging Face](https://huggingface.co/) account and token | Required for speaker identification. Accept the [`pyannote/speaker-diarization-3.1`](https://huggingface.co/pyannote/speaker-diarization-3.1) terms, then generate a token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens). Without a token, recalld transcribes but cannot tell speakers apart. |
 
 ---
 
