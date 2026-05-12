@@ -5,17 +5,23 @@ from pathlib import Path
 
 import pytest
 
-from recalld.llm.prompt_cache import get_cached_prompt, save_prompt_cache, sync_prompt_cache, KNOWN_PROMPT_NAMES
+from recalld.llm.prompt_cache import get_cached_prompt, save_prompt_cache, sync_prompt_cache, KNOWN_PROMPT_NAMES, BOOTSTRAP_PROMPT_CACHE_PATH
 
 
-def test_get_cached_prompt_returns_none_when_file_missing(tmp_path):
+def test_get_cached_prompt_returns_none_when_no_cache_and_no_bootstrap(tmp_path, monkeypatch):
+    monkeypatch.setattr("recalld.llm.prompt_cache.BOOTSTRAP_PROMPT_CACHE_PATH", tmp_path / "missing.json")
+
     result = get_cached_prompt("recalld/focus-instructions", cache_path=tmp_path / "prompts.json")
+
     assert result is None
 
 
-def test_get_cached_prompt_returns_none_when_prompt_not_in_cache(tmp_path):
+def test_get_cached_prompt_returns_none_when_prompt_not_in_any_cache(tmp_path, monkeypatch):
     cache_path = tmp_path / "prompts.json"
     cache_path.write_text(json.dumps({"recalld/other-prompt": {"text": "other", "version": 1}}))
+    bootstrap = tmp_path / "bootstrap.json"
+    bootstrap.write_text(json.dumps({"recalld/other-prompt": {"text": "other bootstrap", "version": 1}}))
+    monkeypatch.setattr("recalld.llm.prompt_cache.BOOTSTRAP_PROMPT_CACHE_PATH", bootstrap)
 
     result = get_cached_prompt("recalld/focus-instructions", cache_path=cache_path)
 
@@ -115,6 +121,35 @@ def test_sync_prompt_cache_merges_with_existing_cache(tmp_path):
 
     assert get_cached_prompt("recalld/existing-prompt", cache_path=cache_path) == "old"
     assert get_cached_prompt("recalld/note-title", cache_path=cache_path) == "new title"
+
+
+def test_get_cached_prompt_falls_back_to_bootstrap_when_user_cache_missing(tmp_path, monkeypatch):
+    bootstrap = tmp_path / "bootstrap" / "prompts.json"
+    bootstrap.parent.mkdir()
+    bootstrap.write_text(json.dumps({"recalld/note-title": {"text": "bootstrap text", "version": 1}}))
+    monkeypatch.setattr("recalld.llm.prompt_cache.BOOTSTRAP_PROMPT_CACHE_PATH", bootstrap)
+
+    result = get_cached_prompt("recalld/note-title", cache_path=tmp_path / "missing.json")
+
+    assert result == "bootstrap text"
+
+
+def test_get_cached_prompt_prefers_user_cache_over_bootstrap(tmp_path, monkeypatch):
+    bootstrap = tmp_path / "bootstrap" / "prompts.json"
+    bootstrap.parent.mkdir()
+    bootstrap.write_text(json.dumps({"recalld/note-title": {"text": "bootstrap text", "version": 1}}))
+    monkeypatch.setattr("recalld.llm.prompt_cache.BOOTSTRAP_PROMPT_CACHE_PATH", bootstrap)
+
+    user_cache = tmp_path / "prompts.json"
+    user_cache.write_text(json.dumps({"recalld/note-title": {"text": "user text", "version": 2}}))
+
+    result = get_cached_prompt("recalld/note-title", cache_path=user_cache)
+
+    assert result == "user text"
+
+
+def test_bootstrap_prompt_cache_path_points_to_existing_file():
+    assert BOOTSTRAP_PROMPT_CACHE_PATH.exists(), f"Bootstrap cache not found at {BOOTSTRAP_PROMPT_CACHE_PATH}"
 
 
 def test_known_prompt_names_includes_all_pipeline_prompts():

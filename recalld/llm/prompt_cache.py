@@ -7,6 +7,7 @@ from typing import Any
 
 
 DEFAULT_PROMPT_CACHE_PATH = Path.home() / ".config" / "recalld" / "prompts.json"
+BOOTSTRAP_PROMPT_CACHE_PATH = Path(__file__).parent.parent.parent / "bootstrap" / "prompts.json"
 
 KNOWN_PROMPT_NAMES: tuple[str, ...] = (
     "recalld/postprocess-summary-single",
@@ -25,10 +26,7 @@ def _resolve_cache_path(cache_path: Path | None) -> Path:
     return cache_path or DEFAULT_PROMPT_CACHE_PATH
 
 
-def get_cached_prompt(prompt_name: str, cache_path: Path | None = None) -> str | None:
-    path = _resolve_cache_path(cache_path)
-    if not path.exists():
-        return None
+def _read_prompt_from_file(path: Path, prompt_name: str) -> str | None:
     try:
         data: dict[str, Any] = json.loads(path.read_text())
         entry = data.get(prompt_name)
@@ -37,6 +35,17 @@ def get_cached_prompt(prompt_name: str, cache_path: Path | None = None) -> str |
         return entry.get("text")
     except Exception:
         return None
+
+
+def get_cached_prompt(prompt_name: str, cache_path: Path | None = None) -> str | None:
+    path = _resolve_cache_path(cache_path)
+    if path.exists():
+        result = _read_prompt_from_file(path, prompt_name)
+        if result is not None:
+            return result
+    if BOOTSTRAP_PROMPT_CACHE_PATH.exists():
+        return _read_prompt_from_file(BOOTSTRAP_PROMPT_CACHE_PATH, prompt_name)
+    return None
 
 
 def save_prompt_cache(data: dict[str, Any], cache_path: Path | None = None) -> None:

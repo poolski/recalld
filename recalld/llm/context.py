@@ -188,7 +188,7 @@ async def ensure_loaded_context_length(
 
     loaded_models = _loaded_models(models)
 
-    if selected.loaded_context_length and requested_context_length is None:
+    if selected.loaded_context_length and requested_context_length is None and len(loaded_models) == 1:
         return selected.loaded_context_length
 
     if selected.loaded_context_length and requested_context_length is not None:
@@ -197,8 +197,12 @@ async def ensure_loaded_context_length(
 
     max_length = requested_context_length or selected.max_context_length or selected.context_length or FALLBACK_CONTEXT_LENGTH
     client = LLMClient(base_url=base_url, model=model)
-    if requested_context_length is not None and loaded_models:
-        for loaded in loaded_models:
+    for loaded in loaded_models:
+        if loaded.id == model:
+            # Only unload the target model if being reloaded with a different context length
+            if requested_context_length is not None and loaded.loaded_context_length != requested_context_length:
+                await client.unload_model(instance_id=loaded.loaded_instance_id or loaded.id)
+        else:
             await client.unload_model(instance_id=loaded.loaded_instance_id or loaded.id)
     load_response = await client.load_model(context_length=max_length)
     loaded_length = _context_length_from_load_response(load_response)
