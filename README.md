@@ -1,128 +1,146 @@
 # recalld
 
-`recalld` is a local web app for turning conversation audio into Obsidian notes.
+`recalld` is a local web app that turns a conversation audio recording into an Obsidian note. It transcribes the audio, identifies who is speaking, matches speakers to names you choose, generates a summary and action items, then writes the finished note directly to your vault.
 
-It helps you:
+Everything runs on your own machine. No data leaves your computer.
 
-- transcribe audio
-- figure out who spoke when
-- match speakers to the names you choose
-- generate a summary and key points
-- write the finished note to an Obsidian vault
+---
 
 ## Requirements
 
-- [Python 3.11+](https://www.python.org/downloads/)
-- [`uv`](https://docs.astral.sh/uv/)
-- [`ffmpeg`](https://ffmpeg.org/)
+You need all of the following before recalld will work end-to-end.
 
-For the full workflow, you also need:
+**Python 3.11 or newer**
+The language recalld is written in.
 
-- [Obsidian](https://obsidian.md/) with the [Local REST API plugin](https://github.com/coddingtonbear/obsidian-local-rest-api) enabled
-- an LLM server such as [LM Studio](https://lmstudio.ai/)
-- a [Hugging Face](https://huggingface.co/) token for [`pyannote.audio`](https://github.com/pyannote/pyannote-audio)
+**[uv](https://docs.astral.sh/uv/)**
+The tool that installs Python packages and runs recalld.
+
+**[ffmpeg](https://ffmpeg.org/)**
+Converts audio files before transcription.
+
+**[LM Studio](https://lmstudio.ai/)**
+Runs the AI that writes the note. Install it, then download a model — a 4–8 B parameter model works well. `make setup` installs the LM Studio preset that recalld uses; you need to open LM Studio before running setup.
+
+**[Obsidian](https://obsidian.md/) with the [Local REST API plugin](https://github.com/coddingtonbear/obsidian-local-rest-api)**
+Where the finished notes are saved. Install the plugin from the Obsidian community plugins browser and enable it. It exposes a local API that recalld uses to write notes.
+
+**[Hugging Face](https://huggingface.co/) account and token**
+Required for speaker identification (diarisation). Create a free account, accept the terms for [`pyannote/speaker-diarization-3.1`](https://huggingface.co/pyannote/speaker-diarization-3.1), then generate a token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens).
+
+> If you skip the Hugging Face token, recalld will still transcribe audio — it just cannot tell which speaker said what.
+
+---
 
 ## Install
 
-Install the system dependencies first, then set up the project.
+### 1. Install system tools
 
-1. Install Python 3.11 or newer:
-   - macOS with Homebrew: `brew install python`
-   - Debian/Ubuntu: `sudo apt install python3`
-   - Fedora: `sudo dnf install python3`
-   - Arch Linux: `sudo pacman -S python`
-   - Otherwise, install it from [python.org](https://www.python.org/downloads/)
-2. Install `ffmpeg`:
-   - macOS with Homebrew: `brew install ffmpeg`
-   - Debian/Ubuntu: `sudo apt install ffmpeg`
-   - Fedora: `sudo dnf install ffmpeg`
-   - Arch Linux: `sudo pacman -S ffmpeg`
-   - Windows: use Chocolatey, Winget, or another package manager
-3. Install `uv`:
-   - macOS with Homebrew: `brew install uv`
-   - macOS and Linux: follow the instructions at [docs.astral.sh/uv](https://docs.astral.sh/uv/)
-   - Windows: use the same `uv` installation guide
-4. Get the code and open the project folder.
-5. Install the project dependencies:
+**macOS (Homebrew)**
 
 ```bash
-uv sync --all-groups
+brew install python ffmpeg uv
 ```
 
-## Run
-
-Start the app with:
+**Debian / Ubuntu**
 
 ```bash
-make run
+sudo apt install python3 ffmpeg
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-Then open <http://127.0.0.1:8765> in your browser.
+**Fedora**
+
+```bash
+sudo dnf install python3 ffmpeg
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+### 2. Get the code
+
+```bash
+git clone https://github.com/your-org/recalld.git
+cd recalld
+```
+
+### 3. Run setup
+
+```bash
+make setup
+```
+
+This installs Python dependencies, loads the default AI prompts into Langfuse (if you have it running), and copies the LM Studio preset that recalld needs. If Langfuse or LM Studio is not running, those steps are skipped gracefully — you can re-run `make setup` later.
+
+---
 
 ## Configure
 
-Open the Settings page and set:
+Start recalld, then open **Settings** in the browser to fill in:
 
-- Vault name
-- Obsidian API URL
-- Obsidian API key
-- LLM base URL
-- LLM model
-- Hugging Face token
-- Whisper model
-- Scratch retention days
+| Setting                    | What it is                                                                                                              |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| **Obsidian API URL**       | The URL shown in the Local REST API plugin settings. Default: `https://127.0.0.1:27124`                                 |
+| **Obsidian API key**       | The key shown in the Local REST API plugin settings. Copy it from there.                                                |
+| **LLM base URL**           | The URL of the LM Studio local server. Default: `http://localhost:1234/v1`                                              |
+| **LLM model**              | The model ID from LM Studio — copy it exactly from the LM Studio interface.                                             |
+| **Whisper model**          | Controls transcription quality. `small` is a good starting point; use `large` for better accuracy at the cost of speed. |
+| **Hugging Face token**     | Your token from huggingface.co. Required for speaker identification.                                                    |
+| **Scratch retention days** | How long to keep old job files before they are deleted automatically.                                                   |
 
-The built-in defaults are:
+### Categories
 
-- Obsidian API URL: `https://127.0.0.1:27124`
-- LLM base URL: `http://localhost:1234/v1`
+A **category** is a profile for a recurring type of meeting — for example, "1:1 with Alice" or "Team standup". Each category records:
 
-You also need at least one category. A category tells the app:
+- which folder in your Obsidian vault to save notes to
+- what to call each speaker in the note
+- optionally, a focus note to append action items to
 
-- which Obsidian vault path to write to
-- what to call the two speakers in the final note
-- optionally, which focus note to append to
+You need at least one category before you can process a recording. Create one in the **Categories** section of the app.
+
+---
 
 ## Use
 
-1. Start Obsidian and make sure the Local REST API plugin is running.
-2. Start your LLM server and load a model.
-3. Run `recalld`.
-4. Open the app in your browser.
-5. Add a category if you do not have one yet.
-6. Upload an audio file.
-7. Review the processing stages.
-8. Confirm speaker matching or vault writing when prompted.
+1. Open **Obsidian** and confirm the Local REST API plugin is active (green indicator in its settings).
+2. Open **LM Studio** and start the local server (Developer tab → Start server). recalld loads the model automatically.
+3. Start recalld:
+   ```bash
+   make run
+   ```
+4. Open <http://127.0.0.1:8765> in your browser.
+5. Click **New job**, choose a category, and upload an audio file.
+6. recalld processes the recording in stages — transcription, speaker identification, theme extraction, and note generation. Each stage runs automatically.
+7. When speaker identification finishes, recalld pauses and asks you to confirm which voice belongs to which name. Make your selections and continue.
+8. When the note is ready, recalld writes it to your Obsidian vault. If Obsidian is open, the note opens automatically.
 
-If everything is configured, the app can open the generated note in Obsidian.
+---
 
-## Test
-
-Run:
-
-```bash
-make test
-```
-
-Other useful commands:
+## Other commands
 
 ```bash
-make install
-make run
-make lint
+make test     # run the test suite
+make lint     # check code style
+make fmt      # auto-fix formatting
+make setup    # re-run first-time setup (safe to run again)
 ```
 
-## Notes
+---
 
-- Config is stored in `~/.config/recalld/config.json`.
-- Scratch workspace is stored in `~/.local/share/recalld`.
-- The scratch workspace is created automatically on first run.
-- If the config file becomes invalid, delete it and restart the app.
+## Where files are stored
+
+| What                | Where                            |
+| ------------------- | -------------------------------- |
+| Config              | `~/.config/recalld/config.json`  |
+| Prompt cache        | `~/.config/recalld/prompts.json` |
+| Jobs and recordings | `~/.local/share/recalld/jobs/`   |
+
+If the config file becomes corrupted, delete it and restart — recalld will recreate it with defaults.
+
+---
 
 ## Documentation
 
-- [Docs hub](docs/README.md)
-- [Project setup](docs/setup.md)
-- [Langfuse setup](docs/langfuse.md)
-- [Experiments](docs/experiments.md)
+- [Full setup guide](docs/setup.md)
+- [Langfuse prompt management](docs/langfuse.md)
+- [Running experiments](docs/experiments.md)
 - [Troubleshooting](docs/troubleshooting.md)

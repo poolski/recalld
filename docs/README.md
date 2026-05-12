@@ -1,17 +1,12 @@
 # recalld Documentation
 
-This folder contains setup and operator guides for new users.
+recalld records or imports audio of a conversation, transcribes it, identifies the speakers, and writes a structured summary directly into your Obsidian vault.
 
-## Start Here
+## Where to Start
 
-- [Project setup](setup.md)
-- [Langfuse setup](langfuse.md)
-- [Running experiments](experiments.md)
-- [Troubleshooting](troubleshooting.md)
+If you are setting up recalld for the first time, read the guides in order:
 
-## Quick Map
-
-- Use the setup guide if you are installing `recalld` for the first time.
-- Use the Langfuse guide if you need to configure prompts, evaluator rules, or datasets.
-- Use the experiments guide if you want to compare prompts against your own saved recordings.
-- Use troubleshooting if something is not showing up in the UI.
+1. [Setup](setup.md) — install everything and process your first recording
+2. [Langfuse](langfuse.md) — set up local prompt management (required for editing prompts or running experiments)
+3. [Experiments](experiments.md) — compare different AI prompts against your own recordings
+4. [Troubleshooting](troubleshooting.md) — fixes for common problems

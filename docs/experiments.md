@@ -1,44 +1,54 @@
 # Running Experiments
 
-This guide is for comparing prompts and models on your own saved job data.
+An experiment lets you run a past recording through a different version of an AI prompt and compare the results — for example, to see whether a rewritten summary prompt produces better notes than the current one.
 
-## What Experiments Do
+You need [Langfuse set up](langfuse.md) before running experiments.
 
-Each experiment:
+---
 
-- Loads a saved job from the scratch workspace
-- Seeds a Langfuse dataset for that job if needed
-- Runs one or more prompt labels
-- Loads one or more LM Studio models
-- Writes scores and traces back to Langfuse
+## Concepts
 
-The supported experiment types are:
+**Job**
+Every recording you upload creates a job — a folder on your machine containing the transcript, speaker data, themes, and generated note for that recording. Jobs are stored in `~/.local/share/recalld/jobs/`.
 
-- `themes`
-- `summary`
-- `style`
-- `focus`
+**Prompt label**
+Prompts can have labels that mark their status. The two labels used in experiments are:
 
-## Choose a Job
+- `production` — the version currently used by recalld for real recordings
+- `candidate` — a version you are testing
 
-Pick a job that already has the pipeline output for the step you want to test.
+**Dataset**
+When you run an experiment, recalld creates a dataset in Langfuse for that job. The dataset stores the inputs for each experiment step so you can run the same job through multiple prompts and compare results side by side.
 
-Typical rules of thumb:
+**Score**
+After each experiment run, recalld scores the output automatically. The score tells you how closely the candidate output matches the production output and how well it meets quality criteria.
 
-- `themes` needs a job with `themes.json`
-- `summary` needs `aligned.json` and `postprocess.json`
-- `style` needs `aligned.json` and `postprocess.json`
-- `focus` needs `aligned.json` and `postprocess.json`
+---
 
-The scratch job directory is usually:
+## Choose a Recording to Test With
 
-```text
-~/.local/share/recalld/jobs/<job-id>
+Find a job ID from a recording you have already processed. You can see all your jobs in the recalld UI, or list them on the command line:
+
+```bash
+ls ~/.local/share/recalld/jobs/
 ```
+
+Each folder name is a job ID. Choose one that already has the output you want to test:
+
+| Experiment type | What the job needs       |
+| --------------- | ------------------------ |
+| `themes`        | A completed themes step  |
+| `summary`       | A completed summary step |
+| `style`         | A completed summary step |
+| `focus`         | A completed summary step |
+
+If a job is missing a step, open the recording in the recalld UI and complete that stage first.
+
+---
 
 ## Run a Baseline
 
-To run a single prompt label:
+Run the production prompt against your chosen job to get a baseline score:
 
 ```bash
 uv run python scripts/langfuse experiment summary \
@@ -46,25 +56,15 @@ uv run python scripts/langfuse experiment summary \
   --prompt-label production
 ```
 
-Repeat the same idea for:
+Replace `summary` with `themes`, `style`, or `focus` depending on what you want to test.
 
-```bash
-uv run python scripts/langfuse experiment style \
-  --job-id <job-id> \
-  --prompt-label production
+---
 
-uv run python scripts/langfuse experiment focus \
-  --job-id <job-id> \
-  --prompt-label production
+## Compare Production Against a Candidate
 
-uv run python scripts/langfuse experiment themes \
-  --job-id <job-id> \
-  --prompt-label production
-```
+First, create a candidate version of the prompt you want to test. In Langfuse, go to **Prompts**, open the prompt, edit it, and save the new version with the `candidate` label.
 
-## Compare Production vs Candidate
-
-To compare two prompt labels, repeat `--prompt-label`:
+Then run the experiment with both labels:
 
 ```bash
 uv run python scripts/langfuse experiment summary \
@@ -73,11 +73,13 @@ uv run python scripts/langfuse experiment summary \
   --prompt-label candidate
 ```
 
-The same pattern works for `style`, `focus`, and `themes`.
+recalld runs both prompt versions against the same recording inputs and writes scores for each to Langfuse. Open [http://localhost:3000](http://localhost:3000) and go to **Datasets** to compare the runs side by side.
 
-## Multi-Model Sweeps
+---
 
-You can compare multiple local models in one run:
+## Compare Multiple Models
+
+You can also test how different AI models perform on the same prompt:
 
 ```bash
 uv run python scripts/langfuse experiment focus \
@@ -87,42 +89,37 @@ uv run python scripts/langfuse experiment focus \
   --llm-model qwen/qwen3-4b
 ```
 
-When you pass `--llm-model`, the CLI defaults to a context length of `32768` unless you override `--context-length`.
+The models must be available in LM Studio. recalld loads each model in turn, runs the experiment, then switches to the next. When `--llm-model` is used, the context window defaults to 32,768 tokens unless you pass `--context-length` to override it.
 
-## Model Loading
+---
 
-The experiment runner:
+## Understanding Scores
 
-- Loads the requested LM Studio model
-- Unloads the previous model before switching when needed
-- Uses the LM Studio preset `@local:transcript-summariser` for every query
+After a run, two types of scores appear in Langfuse:
 
-That keeps the experiment path aligned with the production pipeline.
+**Reference alignment** — measures how closely the candidate output matches the production output. A score of `1.0` means identical; `0.0` means nothing overlaps. This score is purely structural — it does not judge quality.
 
-## Score Types
+**Evaluator score** — an AI judge reads the output and scores it on quality criteria such as factual accuracy, coverage, and style. This score appears after a short delay while Langfuse runs the evaluator rule in the background.
 
-The score you see depends on the step:
+| Experiment | Scores produced                 |
+| ---------- | ------------------------------- |
+| `themes`   | reference alignment only        |
+| `summary`  | reference alignment + evaluator |
+| `style`    | evaluator only                  |
+| `focus`    | reference alignment + evaluator |
 
-- `themes` uses `reference_alignment`
-- `summary` uses `reference_alignment` plus Langfuse evaluator output
-- `style` uses Langfuse evaluator output
-- `focus` uses Langfuse evaluator output
+If evaluator scores are not appearing, see [Troubleshooting](troubleshooting.md).
 
-If a session page only shows `reference_alignment`, the most common causes are:
-
-- The evaluator rule is missing
-- The evaluator rule is filtered to the wrong dataset
-- The run was too fast and Langfuse had not finished attaching evaluator scores yet
+---
 
 ## Inspect Results
 
-Useful commands after a run:
-
 ```bash
+# List all runs for a dataset
 uv run python scripts/langfuse dataset runs recalld/jobs/<job-id>/summary
-uv run python scripts/langfuse dataset runs recalld/jobs/<job-id>/style
-uv run python scripts/langfuse dataset runs recalld/jobs/<job-id>/focus
+
+# Fetch the details of a specific trace
 uv run python scripts/langfuse trace get <trace-id>
 ```
 
-The Langfuse UI should show the trace, session, and score history grouped together once the run completes.
+You can also browse everything in the Langfuse UI at [http://localhost:3000](http://localhost:3000) — go to **Datasets** to see run comparisons, or **Tracing** to read individual outputs.

@@ -1,67 +1,114 @@
 # Troubleshooting
 
-This page collects the most common setup and experiment issues.
+## recalld Will Not Start
 
-## The App Will Not Start
+**Check Python version**
+```bash
+python3 --version
+```
+recalld requires Python 3.11 or newer.
 
-Check:
+**Check dependencies are installed**
+```bash
+uv sync --all-groups
+```
 
-- Python 3.11+ is installed
-- `uv sync --all-groups` completed successfully
-- `ffmpeg` is on your `PATH`
-- `~/.config/recalld/config.json` is readable and valid JSON
+**Check ffmpeg is available**
+```bash
+ffmpeg -version
+```
+If this fails, install ffmpeg (see [Setup](setup.md)).
 
-If the config file is broken, delete it and restart `recalld` so it can be recreated.
+**Check the config file**
+recalld stores its settings at `~/.config/recalld/config.json`. If this file is corrupted or contains invalid JSON, recalld will refuse to start with an error message. Delete the file and restart — recalld will recreate it with defaults.
 
-## No LLM Responses
+---
 
-Check:
+## The AI Is Not Generating Notes
 
-- The LLM server is running
-- The configured base URL is correct
-- The configured model is loaded
-- The LM Studio preset `@local:transcript-summariser` exists
+**Is LM Studio running?**
+Open LM Studio and confirm the local server is running (green indicator in the Developer tab). The server must be active for recalld to reach it.
 
-If you are sweeping multiple models, make sure each model is available in LM Studio before starting the experiment.
+**Is a model loaded?**
+In LM Studio, go to **My Models** and confirm a model is loaded (not just downloaded). recalld will explicitly load the model you have configured in Settings, but LM Studio must be open and the server must be running.
 
-## Langfuse Scores Are Missing
+**Is the model ID correct?**
+The model ID in recalld's Settings must exactly match the identifier shown in LM Studio. Copy it directly from LM Studio to avoid typos.
 
-Check:
+**Does the `transcript-summariser` preset exist?**
+recalld uses an LM Studio preset named `transcript-summariser` for every AI request. In LM Studio, go to **Presets** and confirm this preset exists. Create it if it is missing.
 
-- The relevant evaluator rule exists in Langfuse
-- The rule is attached to the correct dataset ID
-- The experiment used the correct job and prompt label
-- You are looking at a session, not only the trace detail page
+---
 
-For summary, style, and focus experiments, the session should eventually show both the reference alignment score and the evaluator score.
+## Transcription Is Slow or Inaccurate
 
-If the session only shows `reference_alignment`, the usual causes are:
+The **Whisper model** setting controls transcription quality and speed. Larger models are more accurate but slower:
 
-- The evaluator rule was not configured
-- The dataset ID was not added to the rule filter
-- Langfuse was slow to attach the evaluator score
+| Model | Speed | Accuracy |
+|---|---|---|
+| `tiny` | Very fast | Low |
+| `small` | Fast | Decent |
+| `medium` | Moderate | Good |
+| `large` | Slow | Best |
 
-## Dataset Not Found
+Change the model in recalld's Settings. The model is downloaded automatically on first use.
 
-If Langfuse says a dataset does not exist, run the experiment once for that job so the dataset can be seeded automatically.
+---
 
-If the experiment needs an output file that the job does not have yet, run the missing pipeline stage first.
+## Speaker Names Are Wrong or Missing
 
-## Model Context Length Looks Wrong
+**Diarisation is not configured**
+Speaker identification requires a Hugging Face token. Add your token in Settings and reprocess the recording. Without a token, recalld will still transcribe, but it cannot distinguish who said what.
 
-When running model sweeps, `recalld` asks LM Studio to load the model at the requested context length.
+**Speakers were assigned the wrong names**
+recalld pauses during processing and asks you to confirm which speaker is which. If you assigned the names incorrectly, you can reprocess the recording from the job page.
 
-If the model still reports the wrong length:
+---
 
-- Confirm the model supports the requested length
-- Confirm LM Studio actually reloaded the model
-- Try unloading the model in LM Studio and rerunning the sweep
+## Notes Are Not Appearing in Obsidian
 
-## Need More Help
+**Is Obsidian open?**
+The Local REST API plugin only works while Obsidian is running. Open Obsidian before starting a recalld job.
 
-Useful places to inspect:
+**Is the Local REST API plugin enabled?**
+In Obsidian, go to **Settings** → **Community plugins** and confirm Local REST API is toggled on.
 
-- `docs/langfuse.md`
-- `docs/experiments.md`
-- `scripts/langfuse`
-- `recalld/experiments/`
+**Is the API key correct?**
+The key in recalld's Settings must match the key shown in the Local REST API plugin settings in Obsidian. Copy it again to be sure.
+
+**Is the vault path correct?**
+The vault path in your recalld category must be a folder that exists inside your Obsidian vault. Check that the folder exists and that the path matches exactly (it is case-sensitive).
+
+---
+
+## Langfuse Scores Are Not Appearing
+
+This affects experiments only — normal note generation does not depend on scores.
+
+**Check evaluator rules are configured**
+Open Langfuse → **Settings** → **Evaluators**. The relevant evaluator rule must exist and be enabled.
+
+**Check the rule is attached to the right dataset**
+Evaluator rules are filtered by dataset. If the rule is not attached to the dataset produced by your experiment, no scores will appear. See [Langfuse](langfuse.md) for how to update the filter.
+
+**Wait a moment**
+Langfuse runs evaluators asynchronously. If a run just finished, wait 30–60 seconds and refresh the session page. The scores appear after the background job completes.
+
+**You are looking at a trace, not a session**
+Scores are attached to the session, not the individual trace. In Langfuse, navigate to **Tracing** → **Sessions** to see the aggregated scores for a run.
+
+---
+
+## An Experiment Dataset Is Missing
+
+Run the experiment at least once for that job to create the dataset automatically. If the experiment exits early because a required output is missing (for example, the job has no themes yet), complete that stage of the recording in the recalld UI first, then rerun the experiment.
+
+---
+
+## Something Else Is Wrong
+
+Useful places to look:
+
+- The recalld terminal output — error messages and stack traces appear here
+- Langfuse at [http://localhost:3000](http://localhost:3000) — traces show exactly what the AI received and returned
+- The job folder at `~/.local/share/recalld/jobs/<job-id>/` — contains all the intermediate files for that recording
